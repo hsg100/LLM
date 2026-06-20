@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { apiGet, apiUrl, Job, JobEvent } from "../../../lib/api";
 
 type StageStatus = "done" | "active" | "pending";
+type EventLevel = "ok" | "warn" | "info" | "err";
 
 const STAGE_DEFS: { key: string; label: string }[] = [
   { key: "queued", label: "Queued" },
@@ -32,7 +33,7 @@ function fmtTime(iso: string): string {
   }
 }
 
-function levelOf(ev: JobEvent): "ok" | "warn" | "info" | "err" {
+function levelOf(ev: JobEvent): EventLevel {
   const meta = (ev.meta || {}) as Record<string, any>;
   if (meta.error_type || /fail|error/i.test(ev.message)) return "err";
   if (meta.fallback || meta.source === "stub" || /warn|fallback/i.test(ev.message))
@@ -41,7 +42,7 @@ function levelOf(ev: JobEvent): "ok" | "warn" | "info" | "err" {
   return "info";
 }
 
-function levelColor(level: "ok" | "warn" | "info" | "err"): string {
+function levelColor(level: EventLevel): string {
   return level === "ok"
     ? "var(--good)"
     : level === "warn"
@@ -72,6 +73,84 @@ function countedStageProgress(stageKey: string, events: JobEvent[]): string | nu
   }
   const percent = Math.round(meta.percent ?? (meta.completed / meta.total) * 100);
   return `${meta.completed} of ${meta.total} PDFs · ${percent}%`;
+}
+
+function latestMeaningfulEvent(events: JobEvent[]): JobEvent | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.stage === "done" && /Pipeline complete/i.test(ev.message)) return ev;
+    if (ev.message && ev.message.trim()) return ev;
+  }
+  return null;
+}
+
+function currentActivity(job: Job | null, events: JobEvent[]): {
+  title: string;
+  detail: string;
+  meta: Record<string, any>;
+  level: EventLevel;
+  ts: string | null;
+} {
+  if (!job) {
+    return {
+      title: "Loading job state",
+      detail: "Waiting for the first job snapshot from the API.",
+      meta: {},
+      level: "info",
+      ts: null,
+    };
+  }
+  if (job.stage === "failed") {
+    return {
+      title: "Job failed",
+      detail: job.error || latestMeaningfulEvent(events)?.message || "The pipeline stopped before completion.",
+      meta: (latestMeaningfulEvent(events)?.meta || {}) as Record<string, any>,
+      level: "err",
+      ts: latestMeaningfulEvent(events)?.ts || job.finished_at,
+    };
+  }
+  if (job.stage === "done") {
+    const last = latestMeaningfulEvent(events);
+    return {
+      title: "Pipeline complete",
+      detail: last?.message || "Landscape is ready.",
+      meta: (last?.meta || {}) as Record<string, any>,
+      level: "ok",
+      ts: last?.ts || job.finished_at,
+    };
+  }
+  const stageLabel = STAGE_DEFS[STAGE_INDEX[job.stage]]?.label || job.stage;
+  const lastForStage = [...events].reverse().find((e) => e.stage === job.stage);
+  const last = lastForStage || latestMeaningfulEvent(events);
+  return {
+    title: stageLabel,
+    detail: last?.message || "Waiting for the next pipeline event.",
+    meta: (last?.meta || {}) as Record<string, any>,
+    level: last ? levelOf(last) : "info",
+    ts: last?.ts || null,
+  };
+}
+
+function activityMetaRows(meta: Record<string, any>): { label: string; value: string }[] {
+  const rows: { label: string; value: string }[] = [];
+  if (typeof meta.completed === "number" && typeof meta.total === "number") {
+    rows.push({ label: "Progress", value: `${meta.completed} / ${meta.total}` });
+  }
+  if (typeof meta.percent === "number") rows.push({ label: "Percent", value: `${Math.round(meta.percent)}%` });
+  if (typeof meta.candidate_count === "number") rows.push({ label: "Candidates", value: String(meta.candidate_count) });
+  if (typeof meta.ranked_count === "number") rows.push({ label: "Ranked", value: String(meta.ranked_count) });
+  if (typeof meta.chunks_supplied_to_extraction === "number") {
+    rows.push({ label: "Chunks", value: String(meta.chunks_supplied_to_extraction) });
+  }
+  if (typeof meta.grounded_fields === "number") rows.push({ label: "Grounded", value: String(meta.grounded_fields) });
+  if (typeof meta.ungrounded_fields === "number") rows.push({ label: "Ungrounded", value: String(meta.ungrounded_fields) });
+  if (typeof meta.clusters === "number") rows.push({ label: "Clusters", value: String(meta.clusters) });
+  if (typeof meta.reading_path_items === "number") rows.push({ label: "Reading path", value: String(meta.reading_path_items) });
+  if (typeof meta.concepts_persisted === "number") rows.push({ label: "Concepts", value: String(meta.concepts_persisted) });
+  if (typeof meta.error_type === "string") rows.push({ label: "Error", value: meta.error_type });
+  if (typeof meta.provider === "string") rows.push({ label: "Provider", value: meta.provider });
+  if (typeof meta.model === "string") rows.push({ label: "Model", value: meta.model });
+  return rows.slice(0, 6);
 }
 
 export default function JobPage({ params }: { params: { id: string } }) {
@@ -181,6 +260,8 @@ export default function JobPage({ params }: { params: { id: string } }) {
 
   const progress = Math.round(((job?.progress ?? 0) as number) * 100);
   const stageCountProgress = job ? countedStageProgress(job.stage, events) : null;
+  const activity = currentActivity(job, events);
+  const activityRows = activityMetaRows(activity.meta);
   const isDone = job?.stage === "done";
   const isFailed = job?.stage === "failed";
   const isRunning = !isDone && !isFailed;
@@ -297,6 +378,64 @@ export default function JobPage({ params }: { params: { id: string } }) {
           Couldn't reach the API: <span className="font-mono">{pollErr}</span>. Retrying…
         </div>
       )}
+
+      <div
+        style={{
+          border: "1px solid var(--bd)",
+          borderRadius: 14,
+          background: "var(--panel)",
+          padding: "16px 18px",
+          marginBottom: 20,
+          boxShadow: "var(--shadow)",
+        }}
+      >
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+          <span
+            className={isRunning ? "fm-pulse" : ""}
+            style={{
+              width: 9,
+              height: 9,
+              borderRadius: "50%",
+              background: levelColor(activity.level),
+              marginTop: 6,
+              flex: "none",
+            }}
+          />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{activity.title}</div>
+              {activity.ts && (
+                <span className="font-mono" style={{ fontSize: 10.5, color: "var(--t4)" }}>
+                  last update {fmtTime(activity.ts)}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 13, color: "var(--t2)", lineHeight: 1.55, marginTop: 5 }}>
+              {activity.detail}
+            </div>
+            {activityRows.length > 0 && (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                {activityRows.map((row) => (
+                  <span
+                    key={`${row.label}:${row.value}`}
+                    className="font-mono"
+                    style={{
+                      fontSize: 10.5,
+                      color: "var(--t3)",
+                      border: "1px solid var(--bd)",
+                      borderRadius: 6,
+                      background: "var(--raised)",
+                      padding: "4px 7px",
+                    }}
+                  >
+                    {row.label}: {row.value}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
       <div style={{ marginBottom: 30 }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
@@ -515,7 +654,9 @@ export default function JobPage({ params }: { params: { id: string } }) {
                 <span style={{ color: "var(--accent-ink)", width: 110 }}>
                   {job?.stage}
                 </span>
-                <span style={{ color: "var(--t3)" }}>▌</span>
+                <span style={{ color: "var(--t3)" }}>
+                  {activity.detail} <span className="fm-blink">▌</span>
+                </span>
               </div>
             )}
           </div>

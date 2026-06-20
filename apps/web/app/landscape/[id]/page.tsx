@@ -115,13 +115,23 @@ export default async function LandscapeOverview({ params }: { params: { id: stri
   // Build "Read this first" — first 3 must-reads (or top scored).
   const readFirst = (mustRead.length ? mustRead : papers.slice(0, 3)).slice(0, 3);
 
+  const proseSummary: string =
+    s.field_overview || s.why_it_matters || s.overview || s.summary || s.field_summary || "";
+  const isLandscapeRunning = landscape.status === "running" || landscape.status === "queued";
+  const hasSynthesisPayload = Object.keys(s).length > 0;
   const overviewSummary: string =
-    s.field_overview ||
-    s.why_it_matters ||
-    s.overview ||
-    s.summary ||
-    s.field_summary ||
-    "Synthesis is still being generated. Browse the papers list to see what's been ranked so far.";
+    proseSummary ||
+    (isLandscapeRunning && !hasSynthesisPayload
+      ? "Synthesis is still being generated. Browse the papers list to see what's been ranked so far."
+      : papers.length > 0
+      ? `${landscape.topic} is ready. FieldMap ranked ${papers.length} papers${
+          mustRead.length ? `, including ${mustRead.length} must-read starting point${mustRead.length === 1 ? "" : "s"}` : ""
+        }${
+          Array.isArray(s.clusters) && s.clusters.length
+            ? `, and organized them into ${s.clusters.length} research cluster${s.clusters.length === 1 ? "" : "s"}`
+            : ""
+        }. The prose synthesis was not returned by the model, so use the ranked papers, clusters, and reading plan below as the generated overview.`
+      : `${landscape.topic} is ready, but no ranked papers were returned for this run.`);
 
   // ---------------------------------------------------------------------
   // Pre-compute everything the mobile Today block needs so it can be

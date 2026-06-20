@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -290,7 +291,11 @@ def get_paper_pdf(paper_id: str, s: Session = Depends(get_session)) -> FileRespo
     return FileResponse(
         path,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{path.name}"'},
+        headers={
+            "Content-Disposition": f"inline; filename=\"{path.name}\"; filename*=UTF-8''{quote(path.name)}",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, max-age=3600",
+        },
     )
 
 

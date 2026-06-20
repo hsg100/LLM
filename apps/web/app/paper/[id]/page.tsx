@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiGet, apiUrl, Concept, PaperDetail } from "../../../lib/api";
 import { confidenceColor } from "../../../lib/clusters";
 import ConceptText from "../../../components/concepts/ConceptText";
@@ -15,6 +15,10 @@ export default function PaperPage({ params }: { params: { id: string } }) {
   const [concepts, setConcepts] = useState<Concept[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("extraction");
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [pdfPreviewLoading, setPdfPreviewLoading] = useState(false);
+  const [pdfPreviewErr, setPdfPreviewErr] = useState<string | null>(null);
+  const pdfPreviewUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     apiGet<PaperDetail>(`/api/papers/${params.id}`)
@@ -29,6 +33,69 @@ export default function PaperPage({ params }: { params: { id: string } }) {
       })
       .catch((e) => setErr(e.message || String(e)));
   }, [params.id]);
+
+  const localPdfUrl = data?.pdf.url ? apiUrl(data.pdf.url, false) : null;
+
+  useEffect(() => {
+    if (tab !== "pdf" || !localPdfUrl) return;
+
+    const controller = new AbortController();
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    setPdfPreviewLoading(true);
+    setPdfPreviewErr(null);
+
+    fetch(localPdfUrl, {
+      cache: "no-store",
+      signal: controller.signal,
+      headers: { Accept: "application/pdf" },
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`PDF preview failed: ${r.status}`);
+        const blob = await r.blob();
+        const nextUrl = URL.createObjectURL(
+          blob.type === "application/pdf" ? blob : new Blob([blob], { type: "application/pdf" })
+        );
+        objectUrl = nextUrl;
+        if (!cancelled) {
+          setPdfPreviewUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            pdfPreviewUrlRef.current = nextUrl;
+            return nextUrl;
+          });
+          objectUrl = null;
+        }
+      })
+      .catch((e: any) => {
+        if (e?.name !== "AbortError" && !cancelled) {
+          setPdfPreviewErr(e.message || "PDF preview failed");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPdfPreviewLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [tab, localPdfUrl]);
+
+  useEffect(() => {
+    if (localPdfUrl) return;
+    if (pdfPreviewUrlRef.current) URL.revokeObjectURL(pdfPreviewUrlRef.current);
+    pdfPreviewUrlRef.current = null;
+    setPdfPreviewUrl(null);
+  }, [localPdfUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (pdfPreviewUrlRef.current) URL.revokeObjectURL(pdfPreviewUrlRef.current);
+      pdfPreviewUrlRef.current = null;
+    };
+  }, []);
 
   if (err) {
     return (
@@ -59,7 +126,6 @@ export default function PaperPage({ params }: { params: { id: string } }) {
   const e = (data.extraction || {}) as any;
   const paper = data.paper;
   const landscapeId = data.landscape_ids?.[0] || "";
-  const localPdfUrl = data.pdf.url ? apiUrl(data.pdf.url, false) : null;
   const confidence = Math.round((e.confidence || 0) * 100);
   const score = Math.round((e.confidence || 0) * 100); // backend doesn't surface per-paper score on /papers/{id}; mirror confidence
   const catLabel =
@@ -516,20 +582,22 @@ export default function PaperPage({ params }: { params: { id: string } }) {
 
           <div style={{ padding: 16 }}>
             {localPdfUrl ? (
-              <object
-                data={localPdfUrl}
-                type="application/pdf"
-                className="fm-pdf-preview"
-                style={{
-                  width: "100%",
-                  height: "72vh",
-                  border: "1px solid var(--bd)",
-                  borderRadius: 8,
-                  background: "#fff",
-                }}
-              >
+              pdfPreviewErr ? (
+                <div
+                  style={{
+                    padding: 16,
+                    fontSize: 13,
+                    color: "var(--bad)",
+                    border: "1px dashed var(--bad)",
+                    borderRadius: 8,
+                    background: "rgba(207,77,111,.10)",
+                  }}
+                >
+                  {pdfPreviewErr}
+                </div>
+              ) : pdfPreviewUrl ? (
                 <iframe
-                  src={localPdfUrl}
+                  src={pdfPreviewUrl}
                   className="fm-pdf-preview"
                   style={{
                     width: "100%",
@@ -539,7 +607,25 @@ export default function PaperPage({ params }: { params: { id: string } }) {
                   }}
                   title="PDF preview"
                 />
-              </object>
+              ) : (
+                <div
+                  className="fm-pdf-preview"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "100%",
+                    height: "72vh",
+                    border: "1px solid var(--bd)",
+                    borderRadius: 8,
+                    background: "var(--raised)",
+                    color: "var(--t3)",
+                    fontSize: 13,
+                  }}
+                >
+                  {pdfPreviewLoading ? "Loading embedded PDF..." : "Preparing embedded PDF..."}
+                </div>
+              )
             ) : paper.pdf_url ? (
               <div
                 style={{

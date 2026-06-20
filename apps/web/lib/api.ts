@@ -4,12 +4,16 @@
 export const API_PUBLIC =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
+  "";
+export const API_INTERNAL =
+  process.env.API_URL_INTERNAL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
   "http://localhost:8000";
-export const API_INTERNAL = process.env.API_URL_INTERNAL || API_PUBLIC;
 
 export function apiUrl(path: string, isServer = typeof window === "undefined"): string {
   const base = isServer ? API_INTERNAL : API_PUBLIC;
-  return `${base.replace(/\/$/, "")}${path}`;
+  return base ? `${base.replace(/\/$/, "")}${path}` : path;
 }
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS || 15000);
