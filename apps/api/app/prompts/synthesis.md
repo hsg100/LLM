@@ -24,6 +24,26 @@ path that respects prerequisites and starts with must-read or survey papers.
 {
   "field_overview": "string",
   "why_it_matters": "string",
+  "field_structure": {
+    "nodes": [
+      {
+        "id": "stable-kebab-id",
+        "label": "string",
+        "type": "foundation|concept|method|evaluation|benchmark|dataset|metric|subfield",
+        "description": "string",
+        "importance": 0.0
+      }
+    ],
+    "edges": [
+      {
+        "source": "source-node-id",
+        "target": "target-node-id",
+        "type": "prerequisite|subfield|related|method_flow|evaluation_flow|builds_to",
+        "label": "string",
+        "rationale": "string"
+      }
+    ]
+  },
   "clusters": [
     {
       "name": "string",
@@ -49,6 +69,10 @@ path that respects prerequisites and starts with must-read or survey papers.
   "skip_for_now": ["string"]
 }
 ```
+
+For `field_structure`, produce a compact DAG of the field's intellectual
+structure rather than a paper citation graph. Use stable kebab-case node IDs.
+Only include edges supported by the extracted notes.
 
 ## Per-paper notes
 {{papers_json}}

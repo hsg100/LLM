@@ -36,6 +36,7 @@ from typing import Any, Optional
 from slugify import slugify
 
 from app.config import get_settings
+from app.services.concepts import link_concepts_in_markdown
 from app.services.pdf_storage import pdf_obsidian_embed, pdf_vault_relpath
 
 
@@ -50,6 +51,105 @@ class ExportPlan:
     binary_files: list[tuple[Path, bytes]] = field(default_factory=list)
 
 
+@dataclass
+class ExportPreview:
+    repo_path: str
+    branch: Optional[str]
+    clean: bool
+    ahead: int
+    behind: int
+    files_to_create: list[str] = field(default_factory=list)
+    files_to_update: list[str] = field(default_factory=list)
+    files_to_delete: list[str] = field(default_factory=list)
+    pdfs_to_copy: list[str] = field(default_factory=list)
+    commit_needed: bool = False
+    warnings: list[str] = field(default_factory=list)
+
+
+def preview_plan(plan: ExportPlan, *, root: Path, force: bool = False) -> ExportPreview:
+    """Compare an export plan with the vault without writing any files."""
+    repo, warnings = inspect_repo(root, require_git=True)
+    planned_text = {str(path.relative_to(root)): body for path, body in sorted(plan.files, key=lambda x: str(x[0]))}
+    planned_binary = {
+        str(path.relative_to(root)): data
+        for path, data in sorted(plan.binary_files, key=lambda x: str(x[0]))
+    }
+    _validate_plan_paths(root, [*planned_text.keys(), *planned_binary.keys()])
+
+    files_to_create: list[str] = []
+    files_to_update: list[str] = []
+    pdfs_to_copy: list[str] = []
+
+    for rel, body in planned_text.items():
+        path = root / rel
+        if not path.exists():
+            files_to_create.append(rel)
+            continue
+        try:
+            existing = path.read_text(encoding="utf-8")
+            if force or _sha_text(existing) != _sha_text(body):
+                files_to_update.append(rel)
+        except OSError as e:
+            warnings.append(f"could not read {rel}: {e}")
+            files_to_update.append(rel)
+
+    for rel, data in planned_binary.items():
+        path = root / rel
+        if not path.exists():
+            pdfs_to_copy.append(rel)
+            continue
+        try:
+            if force or hashlib.sha256(path.read_bytes()).hexdigest() != hashlib.sha256(data).hexdigest():
+                pdfs_to_copy.append(rel)
+        except OSError as e:
+            warnings.append(f"could not read {rel}: {e}")
+            pdfs_to_copy.append(rel)
+
+    branch, ahead, behind = _branch_ahead_behind(repo, warnings)
+    clean = not repo.is_dirty(untracked_files=True)
+    if not clean:
+        warnings.append("repo dirty: commit or stash existing vault changes before export")
+
+    commit_needed = bool(files_to_create or files_to_update or pdfs_to_copy)
+    return ExportPreview(
+        repo_path=str(root),
+        branch=branch,
+        clean=clean,
+        ahead=ahead,
+        behind=behind,
+        files_to_create=files_to_create,
+        files_to_update=files_to_update,
+        files_to_delete=[],
+        pdfs_to_copy=pdfs_to_copy,
+        commit_needed=commit_needed,
+        warnings=warnings,
+    )
+
+
+def inspect_repo(root: Path, *, require_git: bool) -> tuple[Any, list[str]]:
+    from git import Repo
+    from git.exc import InvalidGitRepositoryError, NoSuchPathError
+
+    root = root.expanduser()
+    warnings: list[str] = []
+    if not str(root):
+        raise ValueError("repo path missing")
+    if not root.is_absolute():
+        raise ValueError(f"repo path must be absolute: {root}")
+    if not root.exists():
+        raise FileNotFoundError(f"repo path does not exist: {root}")
+    if not root.is_dir():
+        raise NotADirectoryError(f"repo path is not a directory: {root}")
+
+    try:
+        repo = Repo(root)
+    except (InvalidGitRepositoryError, NoSuchPathError) as e:
+        if require_git:
+            raise ValueError(f"git repo not initialized at {root}") from e
+        repo = Repo.init(root)
+    return repo, warnings
+
+
 def render_landscape_export(
     *,
     topic: str,
@@ -60,6 +160,7 @@ def render_landscape_export(
     flashcards: list[dict[str, Any]],
     extractions_by_paper: dict[str, dict[str, Any]],
     root: Path,
+    concepts: list[dict[str, Any]] | None = None,
     generated_at: str | None = None,
 ) -> ExportPlan:
     """Build the full set of file paths and contents for a landscape."""
@@ -68,11 +169,12 @@ def render_landscape_export(
     generated_at = generated_at or datetime.utcnow().isoformat() + "Z"
 
     base = root / VAULT_SUBDIR
+    concepts = concepts or []
 
     plan.files.append(
         (
             base / "Landscapes" / f"{slug}.md",
-            _render_landscape_note(topic, landscape_id, synthesis, landscape_papers, generated_at),
+            _render_landscape_note(topic, landscape_id, synthesis, landscape_papers, generated_at, concepts),
         )
     )
 
@@ -88,18 +190,18 @@ def render_landscape_export(
         plan.files.append(
             (
                 base / "Papers" / slug / f"{paper_slug}.md",
-                _render_paper_note(topic=topic, landscape_paper=lp, extraction=ext, generated_at=generated_at),
+                _render_paper_note(topic=topic, landscape_paper=lp, extraction=ext, generated_at=generated_at, concepts=concepts),
             )
         )
 
     plan.files.append(
-        (base / "Reading Plans" / f"{slug}.md", _render_reading_plan(topic, synthesis, landscape_papers, generated_at)),
+        (base / "Reading Plans" / f"{slug}.md", _render_reading_plan(topic, synthesis, landscape_papers, generated_at, concepts)),
     )
     plan.files.append(
-        (base / "Open Questions" / f"{slug}.md", _render_open_questions(topic, synthesis, landscape_papers, generated_at)),
+        (base / "Open Questions" / f"{slug}.md", _render_open_questions(topic, synthesis, landscape_papers, generated_at, concepts)),
     )
     plan.files.append(
-        (base / "Project Ideas" / f"{slug}.md", _render_project_ideas(topic, synthesis, landscape_papers, generated_at)),
+        (base / "Project Ideas" / f"{slug}.md", _render_project_ideas(topic, synthesis, landscape_papers, generated_at, concepts)),
     )
     plan.files.append(
         (base / "Flashcards" / f"{slug}.md", _render_flashcards(topic, flashcards, generated_at)),
@@ -107,6 +209,14 @@ def render_landscape_export(
     plan.files.append(
         (base / "Exports" / f"{slug}-quiz.md", _render_quiz(topic, quizzes, generated_at)),
     )
+    for concept in concepts:
+        concept_slug = concept.get("slug") or slugify(concept.get("term") or "concept")
+        plan.files.append(
+            (
+                base / "Concepts" / slug / f"{concept_slug}.md",
+                _render_concept_note(topic, concept, landscape_papers, generated_at),
+            )
+        )
 
     return plan
 
@@ -133,6 +243,12 @@ def write_plan(
         repo = Repo(root)
     except (InvalidGitRepositoryError, NoSuchPathError):
         repo = Repo.init(root)
+
+    _validate_plan_paths(
+        root,
+        [str(path.relative_to(root)) for path, _ in plan.files]
+        + [str(path.relative_to(root)) for path, _ in plan.binary_files],
+    )
 
     written_rel: list[str] = []
     hashes: list[tuple[str, str]] = []
@@ -233,6 +349,7 @@ def _render_landscape_note(
     synthesis: dict[str, Any],
     landscape_papers: list[dict[str, Any]],
     generated_at: str,
+    concepts: list[dict[str, Any]],
 ) -> str:
     fm = _frontmatter(
         type="fieldmap-landscape",
@@ -304,7 +421,7 @@ def _render_landscape_note(
 ## PDF availability
 {_render_pdf_availability(landscape_papers, topic_slug)}
 """
-    return body
+    return _link_note_body(body, concepts)
 
 
 def _render_reading_path_inline(steps: list[dict[str, Any]], topic_slug: str) -> str:
@@ -345,6 +462,7 @@ def _render_paper_note(
     landscape_paper: dict[str, Any],
     extraction: dict[str, Any],
     generated_at: str,
+    concepts: list[dict[str, Any]],
 ) -> str:
     title = landscape_paper["title"]
     fm = _frontmatter(
@@ -378,7 +496,7 @@ def _render_paper_note(
         f"**Local vault PDF:** {local_pdf_link or '_Not available._'}\n"
         f"{pdf_embed if pdf_embed else '_No local PDF was available at export time._'}"
     )
-    return f"""{fm}
+    body = f"""{fm}
 
 # {title}
 {quality_note}
@@ -465,6 +583,7 @@ def _render_paper_note(
 
 _Difficulty: {e.get('difficulty_level', 1)}/5 · Reading priority: {e.get('reading_priority', 'optional')} · Confidence: {e.get('confidence', 0)}_
 """
+    return _link_note_body(body, concepts)
 
 
 def _render_inline_grounding(grounding: list[dict[str, Any]], field: str) -> str:
@@ -509,7 +628,13 @@ def _grounding_source(g: dict[str, Any]) -> str:
     return f"{section}{page}{chunk_text}{chunk_id}"
 
 
-def _render_reading_plan(topic: str, synthesis: dict[str, Any], landscape_papers: list[dict[str, Any]], generated_at: str) -> str:
+def _render_reading_plan(
+    topic: str,
+    synthesis: dict[str, Any],
+    landscape_papers: list[dict[str, Any]],
+    generated_at: str,
+    concepts: list[dict[str, Any]],
+) -> str:
     fm = _frontmatter(
         type="fieldmap-reading-plan",
         topic=topic,
@@ -526,15 +651,22 @@ def _render_reading_plan(topic: str, synthesis: dict[str, Any], landscape_papers
             if lp.get("category") == "must-read"
         ]
     body_lines = [_paper_link(topic_slug, s.get("title") or "Paper") + f" — {s.get('why') or ''}" for s in steps]
-    return f"""{fm}
+    body = f"""{fm}
 
 # Reading plan — {topic}
 
 {_bullets(body_lines)}
 """
+    return _link_note_body(body, concepts)
 
 
-def _render_open_questions(topic: str, synthesis: dict[str, Any], landscape_papers: list[dict[str, Any]], generated_at: str) -> str:
+def _render_open_questions(
+    topic: str,
+    synthesis: dict[str, Any],
+    landscape_papers: list[dict[str, Any]],
+    generated_at: str,
+    concepts: list[dict[str, Any]],
+) -> str:
     fm = _frontmatter(
         type="fieldmap-open-questions",
         topic=topic,
@@ -542,15 +674,22 @@ def _render_open_questions(topic: str, synthesis: dict[str, Any], landscape_pape
         source="fieldmap",
         tags=["fieldmap", f"topic/{slugify(topic)}"],
     )
-    return f"""{fm}
+    body = f"""{fm}
 
 # Open questions — {topic}
 
 {_bullets(synthesis.get('open_problems') or [])}
 """
+    return _link_note_body(body, concepts)
 
 
-def _render_project_ideas(topic: str, synthesis: dict[str, Any], landscape_papers: list[dict[str, Any]], generated_at: str) -> str:
+def _render_project_ideas(
+    topic: str,
+    synthesis: dict[str, Any],
+    landscape_papers: list[dict[str, Any]],
+    generated_at: str,
+    concepts: list[dict[str, Any]],
+) -> str:
     fm = _frontmatter(
         type="fieldmap-project-ideas",
         topic=topic,
@@ -558,12 +697,97 @@ def _render_project_ideas(topic: str, synthesis: dict[str, Any], landscape_paper
         source="fieldmap",
         tags=["fieldmap", f"topic/{slugify(topic)}"],
     )
-    return f"""{fm}
+    body = f"""{fm}
 
 # Project ideas — {topic}
 
 {_bullets(synthesis.get('project_ideas') or [])}
 """
+    return _link_note_body(body, concepts)
+
+
+def _render_concept_note(
+    topic: str,
+    concept: dict[str, Any],
+    landscape_papers: list[dict[str, Any]],
+    generated_at: str,
+) -> str:
+    term = concept.get("term") or "Concept"
+    title = _obsidian_title(str(term))
+    related = concept.get("related_terms") or []
+    paper_ids = set(concept.get("paper_ids") or [])
+    mentioned = [lp for lp in landscape_papers if lp.get("paper_id") in paper_ids]
+    topic_slug = slugify(topic)
+    fm = _frontmatter(
+        type="concept",
+        source="ai-generated",
+        status="draft",
+        landscape=f"[[{topic}]]",
+        confidence=round(float(concept.get("confidence") or 0), 2),
+        generated_at=generated_at,
+        tags=["fieldmap", "concept", f"topic/{topic_slug}"],
+    )
+    grounding = concept.get("source_grounding") or []
+    grounding_md = _render_concept_grounding(grounding)
+    return f"""{fm}
+
+# {title}
+
+## Short definition
+{concept.get("short_definition") or "_Pending._"}
+
+## Longer explanation
+{concept.get("long_definition") or "_Pending._"}
+
+## Why it matters
+{concept.get("why_it_matters") or "_Pending._"}
+
+## Related terms
+{_bullets([f"[[{_obsidian_title(str(x))}]]" for x in related])}
+
+## Mentioned in papers
+{_bullets([_paper_link(topic_slug, lp["title"]) for lp in mentioned])}
+
+## Source grounding
+{grounding_md}
+"""
+
+
+def _render_concept_grounding(grounding: list[dict[str, Any]]) -> str:
+    if not grounding:
+        return "_No structured grounding was available for this concept._"
+    out: list[str] = []
+    for g in grounding[:8]:
+        quote = str(g.get("quote") or "").strip()
+        source = g.get("source") or g.get("field") or "source"
+        paper_id = g.get("paper_id")
+        bits = [f"- Source: {source}"]
+        if paper_id:
+            bits.append(f"- Paper ID: `{paper_id}`")
+        if quote:
+            bits.append(f"- Evidence: \"{quote}\"")
+        if g.get("confidence") is not None:
+            bits.append(f"- Confidence: {float(g.get('confidence') or 0):.2f}")
+        out.append("\n".join(bits))
+    return "\n\n".join(out)
+
+
+def _link_note_body(body: str, concepts: list[dict[str, Any]]) -> str:
+    if not concepts:
+        return body
+    if not body.startswith("---"):
+        return link_concepts_in_markdown(body, concepts)
+    end = body.find("\n---", 3)
+    if end == -1:
+        return link_concepts_in_markdown(body, concepts)
+    frontmatter = body[: end + 4]
+    rest = body[end + 4 :]
+    return frontmatter + link_concepts_in_markdown(rest, concepts)
+
+
+def _obsidian_title(term: str) -> str:
+    words = term.split()
+    return " ".join(w if w.isupper() else w[:1].upper() + w[1:] for w in words)
 
 
 def _render_flashcards(topic: str, flashcards: list[dict[str, Any]], generated_at: str) -> str:
@@ -616,3 +840,52 @@ def make_repo_root() -> Path:
     p = p.expanduser()
     os.makedirs(p, exist_ok=True)
     return p
+
+
+def get_configured_repo_root(*, create: bool) -> Path:
+    raw = (get_settings().obsidian_export_repo_path or "").strip()
+    if not raw:
+        raise ValueError("repo path missing")
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        raise ValueError(f"repo path must be absolute: {p}")
+    if create:
+        os.makedirs(p, exist_ok=True)
+    return p
+
+
+def _validate_plan_paths(root: Path, relative_paths: list[str]) -> None:
+    root_resolved = root.resolve()
+    for rel in relative_paths:
+        rel_path = Path(rel)
+        if rel_path.is_absolute() or ".." in rel_path.parts:
+            raise ValueError(f"path safety failed for planned export path: {rel}")
+        target = (root / rel_path).resolve()
+        try:
+            target.relative_to(root_resolved)
+        except ValueError as e:
+            raise ValueError(f"path safety failed for planned export path: {rel}") from e
+
+
+def _sha_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _branch_ahead_behind(repo: Any, warnings: list[str]) -> tuple[Optional[str], int, int]:
+    try:
+        branch = repo.active_branch.name
+    except Exception:  # noqa: BLE001
+        warnings.append("branch unknown: repository has detached HEAD or no commits")
+        return None, 0, 0
+
+    ahead = 0
+    behind = 0
+    try:
+        tracking = repo.active_branch.tracking_branch()
+        if tracking is None:
+            return branch, 0, 0
+        ahead = sum(1 for _ in repo.iter_commits(f"{tracking}..HEAD"))
+        behind = sum(1 for _ in repo.iter_commits(f"HEAD..{tracking}"))
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"could not compute ahead/behind: {e}")
+    return branch, ahead, behind

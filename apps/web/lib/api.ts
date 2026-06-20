@@ -1,7 +1,10 @@
 // Single place that knows the API base URL. On the server we use the
 // internal docker hostname; on the client we use the public one.
 
-export const API_PUBLIC = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_PUBLIC =
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:8000";
 export const API_INTERNAL = process.env.API_URL_INTERNAL || API_PUBLIC;
 
 export function apiUrl(path: string, isServer = typeof window === "undefined"): string {
@@ -132,6 +135,7 @@ export type Flashcard = {
 export type PaperDetail = {
   paper: Paper;
   extraction: Record<string, any> | null;
+  landscape_ids?: string[];
   pdf: { status: string; bytes: number | null; error: string | null; url: string | null; storage_path: string | null };
   sections: { heading: string | null; content: string }[];
   chunks: {
@@ -145,4 +149,33 @@ export type PaperDetail = {
     char_end: number | null;
     content: string;
   }[];
+};
+
+export type Concept = {
+  id: string;
+  landscape_id: string;
+  term: string;
+  slug: string;
+  aliases: string[];
+  short_definition: string;
+  long_definition: string;
+  why_it_matters: string;
+  related_terms: string[];
+  paper_ids: string[];
+  source_grounding: Record<string, any>[];
+  confidence: number;
+  importance: number;
+};
+
+export type ConceptDetail = {
+  concept: Concept;
+  related_concepts: Concept[];
+  papers: Paper[];
+  source_grounding: Record<string, any>[];
+  example_snippets: string[];
+};
+
+export type ConceptMap = {
+  nodes: { id: string; label: string; type: string }[];
+  edges: { source: string; target: string; type: string }[];
 };

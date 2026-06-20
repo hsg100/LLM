@@ -164,6 +164,37 @@ class Extraction(BaseModel):
 # ---------------------------------------------------------------------------
 # Synthesis (the landscape document)
 # ---------------------------------------------------------------------------
+FieldEdgeType = Literal[
+    "prerequisite",
+    "subfield",
+    "related",
+    "method_flow",
+    "evaluation_flow",
+    "builds_to",
+]
+
+
+class FieldNode(BaseModel):
+    id: str
+    label: str
+    type: Optional[str] = None
+    description: Optional[str] = None
+    importance: Optional[float] = Field(default=None, ge=0, le=1)
+
+
+class FieldEdge(BaseModel):
+    source: str
+    target: str
+    type: FieldEdgeType
+    label: Optional[str] = None
+    rationale: Optional[str] = None
+
+
+class FieldStructure(BaseModel):
+    nodes: list[FieldNode] = Field(default_factory=list)
+    edges: list[FieldEdge] = Field(default_factory=list)
+
+
 class ClusterOut(BaseModel):
     id: Optional[str] = None
     name: str
@@ -183,6 +214,7 @@ class Synthesis(BaseModel):
     why_it_matters: str = ""
     content_quality: str = "ok"
     extraction_quality: dict[str, Any] = Field(default_factory=dict)
+    field_structure: FieldStructure = Field(default_factory=FieldStructure)
     clusters: list[ClusterOut] = Field(default_factory=list)
     must_read_paper_ids: list[str] = Field(default_factory=list)
     reading_path: list[ReadingPathStep] = Field(default_factory=list)
@@ -193,6 +225,57 @@ class Synthesis(BaseModel):
     open_problems: list[str] = Field(default_factory=list)
     project_ideas: list[str] = Field(default_factory=list)
     skip_for_now: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Concepts
+# ---------------------------------------------------------------------------
+class ConceptOut(BaseModel):
+    id: str
+    landscape_id: str
+    term: str
+    slug: str
+    aliases: list[str] = Field(default_factory=list)
+    short_definition: str = ""
+    long_definition: str = ""
+    why_it_matters: str = ""
+    related_terms: list[str] = Field(default_factory=list)
+    paper_ids: list[str] = Field(default_factory=list)
+    source_grounding: list[dict[str, Any]] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    importance: float = Field(default=0.0, ge=0, le=1)
+
+
+class ConceptDetailOut(BaseModel):
+    concept: ConceptOut
+    related_concepts: list[ConceptOut] = Field(default_factory=list)
+    papers: list[PaperOut] = Field(default_factory=list)
+    source_grounding: list[dict[str, Any]] = Field(default_factory=list)
+    example_snippets: list[str] = Field(default_factory=list)
+
+
+class ConceptMapNode(BaseModel):
+    id: str
+    label: str
+    type: str = "concept"
+
+
+class ConceptMapEdge(BaseModel):
+    source: str
+    target: str
+    type: str = "related"
+
+
+class ConceptMapOut(BaseModel):
+    nodes: list[ConceptMapNode] = Field(default_factory=list)
+    edges: list[ConceptMapEdge] = Field(default_factory=list)
+
+
+class AnnotatedTextSegment(BaseModel):
+    type: Literal["text", "concept"]
+    text: str
+    concept_slug: Optional[str] = None
+    definition: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -253,3 +336,36 @@ class ExportResult(BaseModel):
     files: list[str]
     commit_sha: Optional[str]
     pushed: bool
+
+
+class ExportPreviewOut(BaseModel):
+    repo_path: str
+    branch: Optional[str] = None
+    clean: bool = False
+    ahead: int = 0
+    behind: int = 0
+    files_to_create: list[str] = Field(default_factory=list)
+    files_to_update: list[str] = Field(default_factory=list)
+    files_to_delete: list[str] = Field(default_factory=list)
+    pdfs_to_copy: list[str] = Field(default_factory=list)
+    commit_needed: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class PaperRelationshipOut(BaseModel):
+    source_paper_id: str
+    target_paper_id: str
+    type: str
+    rationale: Optional[str] = None
+
+
+class PaperGraphNode(BaseModel):
+    paper: PaperOut
+    score: float
+    category: str
+    cluster_id: Optional[str] = None
+
+
+class PaperGraphOut(BaseModel):
+    nodes: list[PaperGraphNode] = Field(default_factory=list)
+    edges: list[PaperRelationshipOut] = Field(default_factory=list)

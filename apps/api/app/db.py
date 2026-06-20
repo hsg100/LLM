@@ -54,6 +54,7 @@ def init_db() -> None:
 
             SQLModel.metadata.create_all(engine)
             _ensure_chunk_metadata_columns()
+            _ensure_concept_columns()
             _validate_vector_columns()
             logger.info("init_db: connected and schema ready")
             return
@@ -138,6 +139,35 @@ def _ensure_chunk_metadata_columns() -> None:
         "ALTER TABLE IF EXISTS chunks ADD COLUMN IF NOT EXISTS page_end INTEGER",
         "ALTER TABLE IF EXISTS chunks ADD COLUMN IF NOT EXISTS char_start INTEGER",
         "ALTER TABLE IF EXISTS chunks ADD COLUMN IF NOT EXISTS char_end INTEGER",
+    ]
+    with engine.begin() as conn:
+        for stmt in statements:
+            conn.execute(text(stmt))
+
+
+def _ensure_concept_columns() -> None:
+    """Backfill richer concept columns for alpha DBs created with the old table."""
+    statements = [
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS term TEXT",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS slug VARCHAR",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS aliases JSONB DEFAULT '[]'::jsonb",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS short_definition TEXT",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS long_definition TEXT",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS why_it_matters TEXT",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS related_terms JSONB DEFAULT '[]'::jsonb",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS paper_ids JSONB DEFAULT '[]'::jsonb",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS source_grounding JSONB DEFAULT '[]'::jsonb",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS confidence FLOAT DEFAULT 0.5",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS importance FLOAT DEFAULT 0.5",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
+        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP",
+        "UPDATE concepts SET term = COALESCE(term, name)",
+        "UPDATE concepts SET slug = COALESCE(slug, regexp_replace(lower(name), '[^a-z0-9]+', '-', 'g'))",
+        "UPDATE concepts SET short_definition = COALESCE(short_definition, definition)",
+        "UPDATE concepts SET long_definition = COALESCE(long_definition, definition)",
+        "UPDATE concepts SET created_at = COALESCE(created_at, NOW())",
+        "UPDATE concepts SET updated_at = COALESCE(updated_at, NOW())",
+        "CREATE INDEX IF NOT EXISTS ix_concepts_slug ON concepts (slug)",
     ]
     with engine.begin() as conn:
         for stmt in statements:

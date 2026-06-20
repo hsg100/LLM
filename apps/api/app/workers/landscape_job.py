@@ -36,6 +36,7 @@ from app.models import (
     LandscapePaper,
     Paper,
     PaperPdf,
+    PaperRelationship,
     PaperSection,
     Quiz,
     SearchJob,
@@ -49,6 +50,7 @@ from app.services.embeddings import (
 )
 from app.services.extraction import extract_paper
 from app.services.llm import get_llm
+from app.services.concepts import generate_concept_glossary, persist_concepts
 from app.services.paper_sources import get_source
 from app.services.paper_sources.base import (
     PaperCandidate,
@@ -60,6 +62,7 @@ from app.services.paper_sources.stub import StubSource
 from app.services.pdf_storage import deterministic_pdf_filename, resolve_pdf_storage_path, store_pdf_bytes
 from app.services.quiz_generation import generate_quizzes_and_flashcards
 from app.services.ranking import rank_papers
+from app.services.relationships import generate_paper_relationships
 from app.services.synthesis import synthesise
 from app.services.vectors import has_embedding, to_list
 
@@ -73,6 +76,7 @@ STAGES = [
     "parsing_pdfs",
     "extracting",
     "synthesising",
+    "concepts",
     "active_recall",
     "done",
 ]
@@ -321,6 +325,42 @@ async def _run(job_id: str) -> None:
         )
         synthesis_dict["extraction_quality"] = extraction_quality
         _persist_synthesis(job_id, synthesis_dict, bundle)
+
+        # ----- 7b. Concept glossary -----
+        _set_stage(job_id, "concepts", 0.86, "Generating concept layer")
+        try:
+            concepts, concept_meta = await generate_concept_glossary(
+                llm_strong,
+                topic=topic,
+                landscape_papers=bundle,
+                synthesis=synthesis_dict,
+            )
+            persisted = _persist_concepts_for_job(job_id, concepts)
+            _append_event(
+                job_id,
+                "concepts",
+                f"Concept layer ready: {persisted} concepts",
+                0.88,
+                meta={
+                    **concept_meta,
+                    "concepts_generated": len(concepts),
+                    "concepts_persisted": persisted,
+                    "available": persisted > 0,
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            _append_event(
+                job_id,
+                "concepts",
+                "Concept layer unavailable; continuing pipeline.",
+                0.88,
+                meta={
+                    "available": False,
+                    "degraded": True,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)[:240],
+                },
+            )
 
         # ----- 8. Active recall -----
         _set_stage(job_id, "active_recall", 0.9, "Generating quiz + flashcards")
@@ -764,6 +804,7 @@ def _load_landscape_bundle(job_id: str, paper_ids: dict[str, str]) -> list[dict[
                     "pdf_url": paper.pdf_url,
                     "arxiv_id": paper.arxiv_id,
                     "category": link.category,
+                    "cluster_id": link.cluster_id,
                     "score": link.score,
                     "rationale": link.rationale,
                     "extraction": ext.data if ext else None,
@@ -832,6 +873,38 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
             if link is not None:
                 link.reading_order = step_idx + 1
                 s.add(link)
+
+        refreshed_bundle: list[dict[str, Any]] = []
+        for b in bundle:
+            link = s.exec(
+                select(LandscapePaper).where(
+                    LandscapePaper.landscape_id == landscape_id,
+                    LandscapePaper.paper_id == b["paper_id"],
+                )
+            ).first()
+            item = dict(b)
+            item["cluster_id"] = link.cluster_id if link else b.get("cluster_id")
+            refreshed_bundle.append(item)
+
+        for rel in s.exec(select(PaperRelationship).where(PaperRelationship.landscape_id == landscape_id)).all():
+            s.delete(rel)
+        s.flush()
+        for rel in generate_paper_relationships(refreshed_bundle):
+            s.add(
+                PaperRelationship(
+                    landscape_id=landscape_id,
+                    src_paper_id=rel["source_paper_id"],
+                    dst_paper_id=rel["target_paper_id"],
+                    kind=rel["type"],
+                    note=rel.get("rationale"),
+                )
+            )
+
+
+def _persist_concepts_for_job(job_id: str, concepts: list[dict[str, Any]]) -> int:
+    with session_scope() as s:
+        landscape_id = _landscape_id_of(s, job_id)
+        return persist_concepts(s, landscape_id, concepts)
 
 
 def _persist_quiz_and_flashcards(

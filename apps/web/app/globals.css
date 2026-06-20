@@ -2,20 +2,336 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+/* ------------------------------------------------------------------
+   FieldMap design system tokens — light + dark themes.
+   Mirror of FieldMap.dc.html so theming is just CSS variables.
+   ------------------------------------------------------------------ */
+:root,
+[data-fm="light"] {
+  --bg: #f4f2ec;
+  --panel: #fffdf8;
+  --raised: #f1eee5;
+  --bd: #e7e2d6;
+  --bd2: #efebe1;
+  --t1: #1c1a16;
+  --t2: #56524a;
+  --t3: #8a867c;
+  --t4: #aba699;
+  --accent: #d4572a;
+  --accent-ink: #b8431f;
+  --accent-bg: rgba(212, 87, 42, 0.09);
+  --sidebar: #efece3;
+  --sidebar-item: rgba(212, 87, 42, 0.10);
+  --topbar: rgba(244, 242, 236, 0.82);
+  --shadow: 0 1px 2px rgba(50, 42, 28, 0.04), 0 2px 8px rgba(50, 42, 28, 0.05);
+  --warm: #fbf3ec;
+  --warm-bd: #f1ddce;
+  --map-bg: radial-gradient(circle at 50% 38%, #fcfaf5, #eeeae1);
+  --node-stroke: #f4f2ec;
+  --map-edge: #c2bbac;
+  --good: #1f9d6b;
+  --good-bg: rgba(31, 157, 107, 0.10);
+  --warn: #b6831f;
+  --bad: #cf4d6f;
+  --grid-line: rgba(50, 42, 28, 0.05);
   color-scheme: light;
 }
 
-html, body {
-  background: #fafaf7;
-  color: #0c0c0e;
+[data-fm="dark"] {
+  --bg: #0b0b0d;
+  --panel: #101013;
+  --raised: #16161b;
+  --bd: #1f1f26;
+  --bd2: #1a1a1f;
+  --t1: #ededf0;
+  --t2: #b9b9c0;
+  --t3: #8c8c95;
+  --t4: #5f5f68;
+  --accent: #e0613a;
+  --accent-ink: #e0613a;
+  --accent-bg: rgba(224, 97, 58, 0.10);
+  --sidebar: #08080a;
+  --sidebar-item: rgba(224, 97, 58, 0.10);
+  --topbar: rgba(11, 11, 13, 0.82);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --warm: #16110e;
+  --warm-bd: #2a211c;
+  --map-bg: radial-gradient(circle at 50% 40%, #101015, #0a0a0c);
+  --node-stroke: #0a0a0c;
+  --map-edge: #4f4f58;
+  --good: #3fb98a;
+  --good-bg: rgba(63, 185, 138, 0.12);
+  --warn: #d6a23a;
+  --bad: #e06b8a;
+  --grid-line: rgba(255, 255, 255, 0.03);
+  color-scheme: dark;
 }
 
-a { color: #1f3a8a; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+html, body {
+  background: var(--bg);
+  color: var(--t1);
+  font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.font-mono {
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+a { color: var(--accent-ink); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-.prose-fieldmap h1 { @apply text-2xl font-semibold mt-6 mb-2; }
-.prose-fieldmap h2 { @apply text-lg font-semibold mt-5 mb-1; }
-.prose-fieldmap p  { @apply my-2 leading-relaxed; }
-.prose-fieldmap ul { @apply list-disc pl-6 my-2; }
-.prose-fieldmap ol { @apply list-decimal pl-6 my-2; }
+.fm-concept-wrap {
+  position: relative;
+  display: inline;
+}
+
+.fm-concept-term {
+  all: unset;
+  cursor: pointer;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent-bg) 65%, transparent);
+  box-shadow: inset 0 -1px 0 var(--accent);
+  color: inherit;
+  padding: 0 2px;
+}
+
+.fm-concept-term:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.fm-concept-popover {
+  position: absolute;
+  z-index: 40;
+  left: 0;
+  bottom: calc(100% + 8px);
+  width: min(280px, 78vw);
+  display: none;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 12px;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--t2);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.fm-concept-popover strong {
+  color: var(--t1);
+  font-size: 12.5px;
+}
+
+.fm-concept-wrap:hover .fm-concept-popover,
+.fm-concept-wrap:focus-within .fm-concept-popover {
+  display: flex;
+}
+
+.fm-concept-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.28);
+  padding: 18px;
+}
+
+.fm-concept-card {
+  width: min(460px, 100%);
+  border: 1px solid var(--bd);
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+
+.fm-concept-open {
+  display: inline-flex;
+  margin-top: 14px;
+  font-size: 12.5px;
+  color: var(--accent-ink);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--bd);
+  border-radius: 999px;
+  border: 2px solid var(--bg);
+}
+
+@keyframes fm-spin   { to { transform: rotate(360deg); } }
+@keyframes fm-pulse  { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes fm-fade   { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes fm-fadein { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fm-blink  { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
+
+.fm-fade   { animation: fm-fade .3s ease; }
+.fm-fadein { animation: fm-fadein .4s ease; }
+.fm-spin   { animation: fm-spin 1s linear infinite; }
+.fm-pulse  { animation: fm-pulse 1.4s ease-in-out infinite; }
+.fm-blink  { animation: fm-blink 1.4s infinite; }
+
+/* Several route components use inline display styles alongside Tailwind's
+   responsive visibility classes. These ensure the visibility utilities win. */
+.hidden { display: none !important; }
+@media (min-width: 768px) {
+  .md\:block { display: block !important; }
+  .md\:flex { display: flex !important; }
+  .md\:inline-flex { display: inline-flex !important; }
+  .md\:hidden { display: none !important; }
+}
+
+/* Responsive shell — mobile = single column with tab bar, desktop = sidebar + main */
+.fm-app-shell { grid-template-columns: 1fr; }
+@media (min-width: 768px) {
+  .fm-app-shell { grid-template-columns: 256px 1fr; }
+  .fm-topbar { padding-left: 24px !important; padding-right: 24px !important; }
+}
+
+/* Reserve space at the bottom of any scrollable content area so the
+   floating BottomTabBar doesn't cover the last row on mobile. */
+@media (max-width: 767px) {
+  .fm-scroll-area {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .fm-page {
+    padding: 18px 18px 40px !important;
+  }
+
+  .fm-page-roomy {
+    padding: 28px 18px 44px !important;
+  }
+
+  .fm-mobile-stack {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 14px !important;
+  }
+
+  .fm-mobile-grid-one {
+    grid-template-columns: 1fr !important;
+  }
+
+  .fm-mobile-wrap {
+    flex-wrap: wrap !important;
+  }
+
+  .fm-mobile-hide {
+    display: none !important;
+  }
+
+  .fm-mobile-full {
+    width: 100% !important;
+  }
+
+  .fm-topbar {
+    height: 54px !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+    gap: 10px !important;
+  }
+
+  .fm-status-pill {
+    display: none !important;
+  }
+
+  .fm-learn-mobile {
+    min-height: calc(100dvh - 54px - 72px - env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .fm-learn-switch {
+    position: sticky !important;
+    bottom: calc(62px + env(safe-area-inset-bottom, 0px)) !important;
+    z-index: 20 !important;
+  }
+
+  .fm-paper-hero {
+    padding: 18px !important;
+    border-radius: 15px !important;
+  }
+
+  .fm-paper-tabs {
+    overflow-x: auto !important;
+    padding-bottom: 1px !important;
+    margin-left: -2px !important;
+    margin-right: -2px !important;
+  }
+
+  .fm-paper-tabs button {
+    white-space: nowrap !important;
+    flex: none !important;
+  }
+
+  .fm-extraction-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .fm-pdf-toolbar {
+    align-items: flex-start !important;
+    flex-direction: column !important;
+  }
+
+  .fm-pdf-preview {
+    height: 58vh !important;
+  }
+
+  .fm-paper-table-head {
+    display: none !important;
+  }
+
+  .fm-paper-row {
+    display: grid !important;
+    grid-template-columns: 36px 1fr !important;
+    gap: 12px !important;
+    align-items: start !important;
+    padding: 15px 14px !important;
+  }
+
+  .fm-paper-rank {
+    align-items: flex-start !important;
+    padding-top: 2px !important;
+  }
+
+  .fm-paper-main-title {
+    white-space: normal !important;
+    line-height: 1.35 !important;
+  }
+
+  .fm-search-form {
+    align-items: stretch !important;
+    flex-direction: column !important;
+    padding: 10px !important;
+  }
+
+  .fm-search-input-row {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+  }
+
+  .fm-trending-row {
+    align-items: flex-start !important;
+  }
+
+  .fm-trending-spark,
+  .fm-trending-count {
+    display: none !important;
+  }
+}
+
+/* small bits of structured content (paper detail fallback sections) */
+.prose-fieldmap h1 { font-size: 1.5rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; }
+.prose-fieldmap h2 { font-size: 1.05rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.25rem; color: var(--t1); }
+.prose-fieldmap p  { line-height: 1.65; color: var(--t2); margin: 0.5rem 0; }
+.prose-fieldmap ul { list-style: disc; padding-left: 1.5rem; margin: 0.5rem 0; }
+.prose-fieldmap ol { list-style: decimal; padding-left: 1.5rem; margin: 0.5rem 0; }

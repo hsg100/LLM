@@ -1,0 +1,23 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	reverse_proxy api:8000 {
+		# Keep SSE job-event streams responsive instead of buffering.
+		flush_interval -1
+		transport http {
+			dial_timeout 30s
+			read_timeout 3600s
+			write_timeout 3600s
+		}
+	}
+}

@@ -233,9 +233,24 @@ class Concept(SQLModel, table=True):
 
     id: str = Field(default_factory=_uuid, primary_key=True)
     landscape_id: str = Field(foreign_key="landscapes.id", index=True)
-    name: str
+    name: str = Field(sa_column=Column(Text))
+    term: Optional[str] = Field(default=None, sa_column=Column(Text))
+    slug: Optional[str] = Field(default=None, sa_column=Column(String, index=True))
+    aliases: list[str] = Field(default_factory=list, sa_column=Column(JSONB, server_default="[]"))
+    short_definition: Optional[str] = Field(default=None, sa_column=Column(Text))
+    long_definition: Optional[str] = Field(default=None, sa_column=Column(Text))
+    why_it_matters: Optional[str] = Field(default=None, sa_column=Column(Text))
+    related_terms: list[str] = Field(default_factory=list, sa_column=Column(JSONB, server_default="[]"))
+    paper_ids: list[str] = Field(default_factory=list, sa_column=Column(JSONB, server_default="[]"))
+    source_grounding: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSONB, server_default="[]"))
+    confidence: float = Field(default=0.5, sa_column=Column(Float))
+    importance: float = Field(default=0.5, sa_column=Column(Float))
     definition: Optional[str] = Field(default=None, sa_column=Column(Text))
     prerequisites: list[str] = Field(default_factory=list, sa_column=Column(JSONB, server_default="[]"))
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(
+        sa_column=Column(DateTime, default=_now, onupdate=_now, nullable=False)
+    )
 
 
 # ---------------------------------------------------------------------------

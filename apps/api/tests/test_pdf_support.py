@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.exporters.obsidian_git import ExportPlan, render_landscape_export, write_plan
+from git import Repo
+
+from app.exporters.obsidian_git import ExportPlan, preview_plan, render_landscape_export, write_plan
 from app.services.pdf_storage import (
     deterministic_pdf_filename,
     is_safe_pdf_path,
@@ -105,3 +107,47 @@ def test_repeated_export_does_not_rewrite_identical_pdf(tmp_path):
     assert written_first == ["FieldMap Research/Attachments/PDFs/paper.pdf"]
     assert written_second == []
     assert hashes_first == hashes_second
+
+
+def test_export_preview_does_not_write_files(tmp_path):
+    Repo.init(tmp_path)
+    plan = render_landscape_export(
+        topic="RAG evaluation",
+        landscape_id="landscape-1",
+        synthesis={},
+        landscape_papers=[],
+        quizzes=[],
+        flashcards=[],
+        extractions_by_paper={},
+        root=tmp_path,
+        generated_at="2026-01-01T00:00:00Z",
+    )
+
+    preview = preview_plan(plan, root=tmp_path)
+
+    assert preview.files_to_create
+    assert preview.commit_needed is True
+    assert not (tmp_path / "FieldMap Research").exists()
+
+
+def test_export_preview_detects_file_changes(tmp_path):
+    Repo.init(tmp_path)
+    plan = render_landscape_export(
+        topic="RAG evaluation",
+        landscape_id="landscape-1",
+        synthesis={},
+        landscape_papers=[],
+        quizzes=[],
+        flashcards=[],
+        extractions_by_paper={},
+        root=tmp_path,
+        generated_at="2026-01-01T00:00:00Z",
+    )
+    target = tmp_path / "FieldMap Research" / "Landscapes" / "rag-evaluation.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("old body", encoding="utf-8")
+
+    preview = preview_plan(plan, root=tmp_path)
+
+    assert "FieldMap Research/Landscapes/rag-evaluation.md" in preview.files_to_update
+    assert target.read_text(encoding="utf-8") == "old body"

@@ -1,91 +1,239 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import { apiGet, Flashcard } from "../../../../lib/api";
+import { apiGet, Flashcard, Landscape } from "../../../../lib/api";
+import { FlashcardInterior } from "../../../../components/learn/FlashcardInterior";
 
 export default function FlashcardsPage({ params }: { params: { id: string } }) {
   const [items, setItems] = useState<Flashcard[]>([]);
+  const [topic, setTopic] = useState<string>("");
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const [known, setKnown] = useState(0);
+  const [review, setReview] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiGet<Flashcard[]>(`/api/landscapes/${params.id}/flashcards`)
-      .then(setItems)
+    Promise.all([
+      apiGet<Flashcard[]>(`/api/landscapes/${params.id}/flashcards`),
+      apiGet<Landscape>(`/api/landscapes/${params.id}`).catch(() => null),
+    ])
+      .then(([cs, l]) => {
+        setItems(cs);
+        if (l) setTopic(l.topic);
+      })
       .finally(() => setLoading(false));
   }, [params.id]);
 
-  if (loading) return <div className="text-sm text-neutral-500">Loading…</div>;
-  if (items.length === 0)
-    return (
-      <div>
-        <h1 className="text-2xl font-semibold mb-2">Flashcards</h1>
-        <p className="text-sm text-neutral-600">No flashcards yet for this landscape.</p>
-      </div>
-    );
+  const total = items.length;
+  const current = items[idx] ?? null;
 
-  const cur = items[idx];
-
-  function nextCard() {
-    setIdx((n) => (n + 1) % items.length);
+  function advance(asKnown: boolean) {
+    if (asKnown) setKnown((n) => n + 1);
+    else setReview((n) => n + 1);
+    setIdx((n) => (n + 1) % Math.max(total, 1));
     setFlipped(false);
   }
-  function prevCard() {
-    setIdx((n) => (n - 1 + items.length) % items.length);
-    setFlipped(false);
-  }
+
+  const interior = (
+    <FlashcardInterior
+      topic={topic}
+      total={total}
+      idx={idx}
+      flipped={flipped}
+      current={current}
+      loading={loading}
+      onFlip={() => setFlipped((f) => !f)}
+      onAdvance={advance}
+    />
+  );
 
   return (
-    <div className="max-w-xl mx-auto">
-      <div className="flex items-center justify-between text-xs text-neutral-500 mb-3">
-        <span>
-          Card {idx + 1} of {items.length}
-        </span>
-        <span>{cur.kind}</span>
+    <>
+      {/* =================== MOBILE: full-bleed =================== */}
+      <div
+        className="md:hidden fm-learn-mobile"
+        style={{
+          minHeight: "100%",
+          display: "flex",
+          flexDirection: "column",
+          animation: "fm-fade .3s ease",
+        }}
+      >
+        {interior}
+        <LearnSwitch active="flashcards" landscapeId={params.id} />
       </div>
 
+      {/* =================== DESKTOP: side-by-side layout =================== */}
       <div
-        role="button"
-        tabIndex={0}
-        onClick={() => setFlipped((f) => !f)}
-        onKeyDown={(e) => {
-          if (e.key === " " || e.key === "Enter") setFlipped((f) => !f);
-          if (e.key === "ArrowRight") nextCard();
-          if (e.key === "ArrowLeft") prevCard();
+        className="hidden md:flex"
+        style={{
+          minHeight: "100%",
+          gap: 40,
+          alignItems: "flex-start",
+          justifyContent: "center",
+          padding: "36px 40px 72px",
+          flexWrap: "wrap",
+          animation: "fm-fade .3s ease",
         }}
-        className="bg-white border border-neutral-200 rounded-lg p-6 min-h-[260px] flex items-center justify-center text-center cursor-pointer select-none shadow-sm"
       >
-        <div>
-          <div className="text-xs uppercase tracking-wide text-neutral-400 mb-3">
-            {flipped ? "Back" : "Front"}
+        <div style={{ maxWidth: 300, paddingTop: 16 }}>
+          <div
+            className="font-mono"
+            style={{
+              fontSize: 11,
+              color: "var(--accent-ink)",
+              letterSpacing: "0.1em",
+              marginBottom: 10,
+            }}
+          >
+            SPACED REVIEW
           </div>
-          <div className="text-lg leading-relaxed">{flipped ? cur.back : cur.front}</div>
-          {!flipped && (
-            <div className="text-xs text-neutral-400 mt-4">tap / space to flip</div>
-          )}
+          <h1
+            style={{
+              fontSize: 25,
+              fontWeight: 600,
+              letterSpacing: "-0.02em",
+              margin: "0 0 14px",
+            }}
+          >
+            Flashcards
+          </h1>
+          <p
+            style={{
+              fontSize: 13.5,
+              lineHeight: 1.65,
+              color: "var(--t3)",
+              margin: "0 0 22px",
+            }}
+          >
+            Tap the card to flip. Rate your recall — cards you miss come back
+            sooner. Concepts pulled from every paper in the landscape.
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 12,
+              marginBottom: 22,
+            }}
+          >
+            <StatBox value={known} label="known" color="var(--good)" />
+            <StatBox value={review} label="review" color="var(--warn)" />
+          </div>
+          <Link
+            href={`/landscape/${params.id}/quiz`}
+            style={{ fontSize: 12, color: "var(--accent-ink)", textDecoration: "none" }}
+          >
+            Switch to quiz →
+          </Link>
+        </div>
+
+        <div
+          style={{
+            flex: 1,
+            maxWidth: 520,
+            minWidth: 320,
+            border: "1px solid var(--bd)",
+            borderRadius: 18,
+            background: "var(--panel)",
+            overflow: "hidden",
+            boxShadow: "var(--shadow)",
+          }}
+        >
+          {interior}
         </div>
       </div>
+    </>
+  );
+}
 
-      <div className="mt-4 flex items-center justify-between">
-        <button
-          onClick={prevCard}
-          className="border border-neutral-300 px-3 py-2 rounded-md"
-        >
-          ← Prev
-        </button>
-        <button
-          onClick={() => setFlipped((f) => !f)}
-          className="bg-ink text-white px-4 py-2 rounded-md"
-        >
-          {flipped ? "Hide answer" : "Show answer"}
-        </button>
-        <button
-          onClick={nextCard}
-          className="border border-neutral-300 px-3 py-2 rounded-md"
-        >
-          Next →
-        </button>
+function StatBox({
+  value,
+  label,
+  color,
+}: {
+  value: number;
+  label: string;
+  color: string;
+}) {
+  return (
+    <div
+      style={{
+        border: "1px solid var(--bd)",
+        borderRadius: 12,
+        background: "var(--panel)",
+        padding: "14px 15px",
+        boxShadow: "var(--shadow)",
+      }}
+    >
+      <div className="font-mono" style={{ fontSize: 22, color }}>
+        {value}
       </div>
+      <div style={{ fontSize: 11, color: "var(--t3)", marginTop: 3 }}>{label}</div>
     </div>
+  );
+}
+
+function LearnSwitch({
+  active,
+  landscapeId,
+}: {
+  active: "quiz" | "flashcards";
+  landscapeId: string;
+}) {
+  return (
+    <div
+      className="fm-learn-switch"
+      style={{
+        display: "flex",
+        gap: 6,
+        padding: "10px 16px 14px",
+        borderTop: "1px solid var(--bd2)",
+        background: "var(--bg)",
+      }}
+    >
+      <SwitchLink
+        href={`/landscape/${landscapeId}/quiz`}
+        label="Quiz"
+        active={active === "quiz"}
+      />
+      <SwitchLink
+        href={`/landscape/${landscapeId}/flashcards`}
+        label="Flashcards"
+        active={active === "flashcards"}
+      />
+    </div>
+  );
+}
+
+function SwitchLink({
+  href,
+  label,
+  active,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      style={{
+        flex: 1,
+        textAlign: "center",
+        padding: "8px 12px",
+        borderRadius: 9,
+        background: active ? "var(--accent-bg)" : "var(--raised)",
+        color: active ? "var(--accent-ink)" : "var(--t2)",
+        border: `1px solid ${active ? "var(--accent)" : "var(--bd)"}`,
+        fontSize: 12.5,
+        fontWeight: active ? 600 : 500,
+        textDecoration: "none",
+      }}
+    >
+      {label}
+    </Link>
   );
 }

@@ -7,6 +7,8 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://fieldmap:fieldmap@db:5432/fieldmap"
     redis_url: str = "redis://redis:6379/0"
+    cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_allowed_origin_regex: str = ""
 
     openai_api_key: str = ""
     deepseek_api_key: str = ""
@@ -38,6 +40,7 @@ class Settings(BaseSettings):
 
     # Runtime + robustness knobs
     env: str = "development"  # development | production
+    log_level: str = "INFO"
     enable_dev_fallback: bool = True  # use deterministic stub when all paper sources fail
     arxiv_timeout_seconds: int = 30
     http_user_agent: str = "FieldMap/0.1 (research tool; +https://example.invalid/fieldmap)"

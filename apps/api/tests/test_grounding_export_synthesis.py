@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.exporters.obsidian_git import render_landscape_export
+from app.schemas import FieldStructure, Synthesis
 from app.services.synthesis import build_papers_json, _deterministic_skeleton
 
 
@@ -96,3 +97,50 @@ def test_synthesis_marks_weakly_grounded_data_honestly():
     assert '"grounded_fields": 1' in packed
     assert '"ungrounded_fields": 1' in packed
     assert skeleton.extraction_quality["grounded_fields"] == 1
+
+
+def test_field_structure_schema_validation():
+    fs = FieldStructure.model_validate(
+        {
+            "nodes": [
+                {"id": "rag", "label": "RAG", "type": "concept", "importance": 0.9},
+                {"id": "eval", "label": "Evaluation", "type": "evaluation"},
+            ],
+            "edges": [
+                {
+                    "source": "rag",
+                    "target": "eval",
+                    "type": "evaluation_flow",
+                    "label": "evaluated by",
+                }
+            ],
+        }
+    )
+
+    synth = Synthesis(field_structure=fs)
+
+    assert synth.field_structure.nodes[0].id == "rag"
+    assert synth.field_structure.edges[0].type == "evaluation_flow"
+
+
+def test_synthesis_fallback_field_structure():
+    papers = [
+        {
+            "paper_id": "p1",
+            "title": "RAG Evaluation",
+            "category": "must-read",
+            "score": 0.9,
+            "extraction": {
+                **GROUNDED_EXTRACTION,
+                "prerequisites": ["retrieval augmented generation"],
+                "key_terms": ["faithfulness"],
+                "benchmarks": ["HotpotQA"],
+            },
+        }
+    ]
+
+    skeleton = _deterministic_skeleton(papers)
+
+    assert skeleton.field_structure.nodes
+    assert any(n.label == "faithfulness" for n in skeleton.field_structure.nodes)
+    assert skeleton.field_structure.edges

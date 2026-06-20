@@ -1,64 +1,40 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import { apiGet, Quiz } from "../../../../lib/api";
+import { apiGet, Landscape, Quiz } from "../../../../lib/api";
+import { QuizInterior } from "../../../../components/learn/QuizInterior";
 
 export default function QuizPage({ params }: { params: { id: string } }) {
   const [items, setItems] = useState<Quiz[]>([]);
+  const [topic, setTopic] = useState<string>("");
   const [idx, setIdx] = useState(0);
   const [picked, setPicked] = useState<number | null>(null);
   const [revealed, setRevealed] = useState(false);
-  const [score, setScore] = useState({ correct: 0, total: 0 });
+  const [score, setScore] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiGet<Quiz[]>(`/api/landscapes/${params.id}/quiz`)
-      .then(setItems)
+    Promise.all([
+      apiGet<Quiz[]>(`/api/landscapes/${params.id}/quiz`),
+      apiGet<Landscape>(`/api/landscapes/${params.id}`).catch(() => null),
+    ])
+      .then(([qs, l]) => {
+        setItems(qs);
+        if (l) setTopic(l.topic);
+      })
       .finally(() => setLoading(false));
   }, [params.id]);
 
-  if (loading) return <div className="text-sm text-neutral-500">Loading…</div>;
-  if (items.length === 0)
-    return (
-      <div>
-        <h1 className="text-2xl font-semibold mb-2">Quiz</h1>
-        <p className="text-sm text-neutral-600">No quiz items yet for this landscape.</p>
-      </div>
-    );
-
-  const cur = items[idx];
-  const done = idx >= items.length;
-
-  if (done) {
-    return (
-      <div className="max-w-xl mx-auto text-center">
-        <h1 className="text-2xl font-semibold mb-2">Quiz complete</h1>
-        <p className="text-lg mb-4">
-          You got <span className="font-semibold">{score.correct}</span> / {score.total} correct.
-        </p>
-        <button
-          onClick={() => {
-            setIdx(0);
-            setScore({ correct: 0, total: 0 });
-            setPicked(null);
-            setRevealed(false);
-          }}
-          className="bg-ink text-white px-4 py-2 rounded-md"
-        >
-          Restart
-        </button>
-      </div>
-    );
-  }
+  const total = items.length;
+  const finished = idx >= total && total > 0;
+  const current = !finished ? items[idx] ?? null : null;
 
   function answer(i: number) {
-    if (revealed) return;
+    if (revealed || !current) return;
     setPicked(i);
     setRevealed(true);
-    setScore((s) => ({
-      correct: s.correct + (i === cur.correct_index ? 1 : 0),
-      total: s.total + 1,
-    }));
+    if (i === current.correct_index) setScore((s) => s + 1);
   }
 
   function next() {
@@ -67,64 +43,204 @@ export default function QuizPage({ params }: { params: { id: string } }) {
     setRevealed(false);
   }
 
+  function restart() {
+    setIdx(0);
+    setScore(0);
+    setPicked(null);
+    setRevealed(false);
+  }
+
+  const interior = (
+    <QuizInterior
+      topic={topic}
+      total={total}
+      idx={idx}
+      score={score}
+      picked={picked}
+      revealed={revealed}
+      finished={finished}
+      loading={loading}
+      current={current}
+      onAnswer={answer}
+      onNext={next}
+      onRestart={restart}
+    />
+  );
+
   return (
-    <div className="max-w-xl mx-auto">
-      <div className="flex items-center justify-between text-xs text-neutral-500 mb-3">
-        <span>
-          Q{idx + 1} of {items.length}
-        </span>
-        <span>
-          {score.correct}/{score.total} correct so far
-        </span>
+    <>
+      {/* =================== MOBILE: full-bleed =================== */}
+      <div
+        className="md:hidden fm-learn-mobile"
+        style={{
+          minHeight: "100%",
+          display: "flex",
+          flexDirection: "column",
+          animation: "fm-fade .3s ease",
+        }}
+      >
+        {interior}
+        <LearnSwitch active="quiz" landscapeId={params.id} />
       </div>
-      <div className="w-full h-1 bg-neutral-200 rounded mb-4 overflow-hidden">
-        <div className="h-full bg-accent" style={{ width: `${(idx / items.length) * 100}%` }} />
-      </div>
 
-      <h2 className="text-lg font-medium mb-4">{cur.question}</h2>
-
-      <ul className="space-y-2">
-        {cur.options.map((opt, i) => {
-          const isCorrect = revealed && i === cur.correct_index;
-          const isWrong = revealed && i === picked && i !== cur.correct_index;
-          return (
-            <li key={i}>
-              <button
-                onClick={() => answer(i)}
-                disabled={revealed}
-                className={`w-full text-left border rounded-md px-3 py-2 ${
-                  isCorrect
-                    ? "border-emerald-500 bg-emerald-50"
-                    : isWrong
-                    ? "border-red-500 bg-red-50"
-                    : "border-neutral-300 bg-white hover:bg-neutral-50"
-                } ${revealed ? "" : "cursor-pointer"}`}
-              >
-                <span className="font-mono text-xs text-neutral-500 mr-2">
-                  {String.fromCharCode(65 + i)}.
-                </span>
-                {opt}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-
-      {revealed && (
-        <div className="mt-4 bg-neutral-50 border border-neutral-200 rounded-md p-3 text-sm">
-          {cur.explanation || "(no explanation)"}
+      {/* =================== DESKTOP: side-by-side layout =================== */}
+      <div
+        className="hidden md:flex"
+        style={{
+          minHeight: "100%",
+          gap: 40,
+          alignItems: "flex-start",
+          justifyContent: "center",
+          padding: "36px 40px 72px",
+          flexWrap: "wrap",
+          animation: "fm-fade .3s ease",
+        }}
+      >
+        <div style={{ maxWidth: 300, paddingTop: 16 }}>
+          <div
+            className="font-mono"
+            style={{
+              fontSize: 11,
+              color: "var(--accent-ink)",
+              letterSpacing: "0.1em",
+              marginBottom: 10,
+            }}
+          >
+            ACTIVE RECALL
+          </div>
+          <h1
+            style={{
+              fontSize: 25,
+              fontWeight: 600,
+              letterSpacing: "-0.02em",
+              margin: "0 0 14px",
+            }}
+          >
+            Quiz
+          </h1>
+          <p
+            style={{
+              fontSize: 13.5,
+              lineHeight: 1.65,
+              color: "var(--t3)",
+              margin: "0 0 22px",
+            }}
+          >
+            One question at a time, generated from the extracted notes. Tap an
+            answer to see grounded feedback.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {[
+              { c: "var(--good)", t: "Immediate scoring & explanation" },
+              { c: "#5b8def", t: "Each question links to its source paper" },
+              { c: "var(--warn)", t: "Misses feed your weak-areas review" },
+            ].map((it) => (
+              <div key={it.t} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: it.c,
+                  }}
+                />
+                <span style={{ fontSize: 12.5, color: "var(--t2)" }}>{it.t}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 22 }}>
+            <Link
+              href={`/landscape/${params.id}/flashcards`}
+              style={{
+                fontSize: 12,
+                color: "var(--accent-ink)",
+                textDecoration: "none",
+              }}
+            >
+              Switch to flashcards →
+            </Link>
+          </div>
         </div>
-      )}
 
-      <div className="mt-4 flex justify-end">
-        <button
-          onClick={next}
-          disabled={!revealed}
-          className="bg-ink text-white px-4 py-2 rounded-md disabled:opacity-50"
+        <div
+          style={{
+            flex: 1,
+            maxWidth: 520,
+            minWidth: 320,
+            border: "1px solid var(--bd)",
+            borderRadius: 18,
+            background: "var(--panel)",
+            overflow: "hidden",
+            boxShadow: "var(--shadow)",
+          }}
         >
-          {idx + 1 === items.length ? "Finish" : "Next"}
-        </button>
+          {interior}
+        </div>
       </div>
+    </>
+  );
+}
+
+/** Small pill row above the bottom tab bar so mobile users can flip between
+    the two Learn surfaces without leaving the screen. */
+function LearnSwitch({
+  active,
+  landscapeId,
+}: {
+  active: "quiz" | "flashcards";
+  landscapeId: string;
+}) {
+  return (
+    <div
+      className="fm-learn-switch"
+      style={{
+        display: "flex",
+        gap: 6,
+        padding: "10px 16px 14px",
+        borderTop: "1px solid var(--bd2)",
+        background: "var(--bg)",
+      }}
+    >
+      <SwitchLink
+        href={`/landscape/${landscapeId}/quiz`}
+        label="Quiz"
+        active={active === "quiz"}
+      />
+      <SwitchLink
+        href={`/landscape/${landscapeId}/flashcards`}
+        label="Flashcards"
+        active={active === "flashcards"}
+      />
     </div>
+  );
+}
+
+function SwitchLink({
+  href,
+  label,
+  active,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      style={{
+        flex: 1,
+        textAlign: "center",
+        padding: "8px 12px",
+        borderRadius: 9,
+        background: active ? "var(--accent-bg)" : "var(--raised)",
+        color: active ? "var(--accent-ink)" : "var(--t2)",
+        border: `1px solid ${active ? "var(--accent)" : "var(--bd)"}`,
+        fontSize: 12.5,
+        fontWeight: active ? 600 : 500,
+        textDecoration: "none",
+      }}
+    >
+      {label}
+    </Link>
   );
 }

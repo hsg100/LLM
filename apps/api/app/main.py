@@ -13,16 +13,26 @@ from app.workers.queue import wait_for_redis
 
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, get_settings().log_level.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("fieldmap.api")
 
 app = FastAPI(title="FieldMap API", version="0.1.0")
 
+settings = get_settings()
+allowed_origins = [
+    origin.strip()
+    for origin in (settings.cors_allowed_origins or "").split(",")
+    if origin.strip()
+]
+if settings.is_development and not allowed_origins:
+    allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
+    allow_origin_regex=settings.cors_allowed_origin_regex or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

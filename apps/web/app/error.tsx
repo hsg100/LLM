@@ -10,22 +10,71 @@ export default function GlobalError({
   reset: () => void;
 }) {
   return (
-    <div className="max-w-xl mx-auto py-8">
-      <h1 className="text-2xl font-semibold mb-2">Something went wrong</h1>
-      <p className="text-sm text-neutral-700 mb-2">
-        The page hit an error while loading. This is usually a transient API issue.
+    <div
+      style={{
+        maxWidth: 640,
+        margin: "0 auto",
+        padding: "48px 40px",
+        animation: "fm-fade .3s ease",
+      }}
+    >
+      <h1
+        style={{
+          fontSize: 22,
+          fontWeight: 600,
+          letterSpacing: "-0.02em",
+          margin: "0 0 8px",
+        }}
+      >
+        Something went wrong
+      </h1>
+      <p style={{ fontSize: 13, color: "var(--t3)", margin: "0 0 14px" }}>
+        The page hit an error while loading. This is usually a transient API
+        issue — try again, or start fresh.
       </p>
-      <pre className="text-xs bg-neutral-50 border border-neutral-200 rounded p-2 my-3 whitespace-pre-wrap break-all">
+      <pre
+        className="font-mono"
+        style={{
+          fontSize: 11,
+          background: "var(--raised)",
+          border: "1px solid var(--bd)",
+          borderRadius: 10,
+          padding: "10px 12px",
+          margin: "12px 0",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-all",
+          color: "var(--t2)",
+        }}
+      >
         {error.message || String(error)}
       </pre>
-      <div className="flex gap-2">
+      <div style={{ display: "flex", gap: 8 }}>
         <button
           onClick={reset}
-          className="bg-ink text-white px-3 py-1.5 rounded-md text-sm"
+          style={{
+            all: "unset",
+            cursor: "pointer",
+            padding: "9px 15px",
+            borderRadius: 9,
+            background: "var(--accent)",
+            color: "#fff",
+            fontSize: 13,
+            fontWeight: 600,
+          }}
         >
           Try again
         </button>
-        <Link href="/search" className="border border-neutral-300 px-3 py-1.5 rounded-md text-sm">
+        <Link
+          href="/search"
+          style={{
+            all: "unset",
+            cursor: "pointer",
+            padding: "9px 15px",
+            borderRadius: 9,
+            border: "1px solid var(--bd)",
+            fontSize: 13,
+          }}
+        >
           New landscape
         </Link>
       </div>

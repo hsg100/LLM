@@ -20,12 +20,15 @@ from sse_starlette.sse import EventSourceResponse
 from app.config import get_settings
 from app.db import get_session, session_scope
 from app.exporters.obsidian_git import (
+    get_configured_repo_root,
     make_repo_root,
+    preview_plan,
     render_landscape_export,
     write_plan,
 )
 from app.models import (
     Chunk,
+    Concept,
     Extraction,
     Flashcard,
     Landscape,
@@ -33,15 +36,23 @@ from app.models import (
     ObsidianExport,
     Paper,
     PaperPdf,
+    PaperRelationship,
     PaperSection,
     Quiz,
     SearchJob,
 )
 from app.schemas import (
+    ConceptDetailOut,
+    ConceptMapOut,
+    ConceptOut,
+    ExportPreviewOut,
     ExportRequest,
     ExportResult,
     FlashcardOut,
     JobOut,
+    PaperGraphNode,
+    PaperGraphOut,
+    PaperRelationshipOut,
     LandscapeCreate,
     LandscapeOut,
     LandscapePaperOut,
@@ -49,7 +60,9 @@ from app.schemas import (
     QuizOut,
     SettingsOut,
     SettingsPatch,
+    Extraction as ExtractionSchema,
 )
+from app.services.concepts import build_concept_map, concept_slug, concept_to_dict
 from app.services.pdf_storage import resolve_pdf_storage_path
 from app.workers.landscape_job import run_landscape_job
 from app.workers.queue import get_queue
@@ -127,6 +140,95 @@ def get_landscape_papers(landscape_id: str, s: Session = Depends(get_session)) -
     return out
 
 
+@router.get("/landscapes/{landscape_id}/concepts", response_model=list[ConceptOut])
+def get_landscape_concepts(landscape_id: str, s: Session = Depends(get_session)) -> list[ConceptOut]:
+    if s.get(Landscape, landscape_id) is None:
+        raise HTTPException(404, "landscape not found")
+    rows = _concept_rows(s, landscape_id)
+    return [ConceptOut.model_validate(concept_to_dict(c)) for c in rows]
+
+
+@router.get("/landscapes/{landscape_id}/concepts/{slug}", response_model=ConceptDetailOut)
+def get_landscape_concept_detail(landscape_id: str, slug: str, s: Session = Depends(get_session)) -> ConceptDetailOut:
+    if s.get(Landscape, landscape_id) is None:
+        raise HTTPException(404, "landscape not found")
+    rows = _concept_rows(s, landscape_id)
+    concept = next((c for c in rows if (c.slug or concept_slug(c.name)) == slug), None)
+    if concept is None:
+        raise HTTPException(404, "concept not found")
+    concept_dict = concept_to_dict(concept)
+    related_names = {str(x).lower() for x in concept_dict.get("related_terms") or []}
+    related_slugs = {concept_slug(str(x)) for x in concept_dict.get("related_terms") or []}
+    related = [
+        concept_to_dict(c)
+        for c in rows
+        if (c.slug or concept_slug(c.name)) != slug
+        and ((c.term or c.name).lower() in related_names or (c.slug or concept_slug(c.name)) in related_slugs)
+    ]
+    papers = [p for p in (s.get(Paper, pid) for pid in concept_dict.get("paper_ids") or []) if p is not None]
+    snippets = [
+        str(g.get("quote") or "").strip()
+        for g in concept_dict.get("source_grounding") or []
+        if isinstance(g, dict) and str(g.get("quote") or "").strip()
+    ][:6]
+    return ConceptDetailOut(
+        concept=ConceptOut.model_validate(concept_dict),
+        related_concepts=[ConceptOut.model_validate(x) for x in related],
+        papers=[PaperOut.model_validate(p, from_attributes=True) for p in papers],
+        source_grounding=concept_dict.get("source_grounding") or [],
+        example_snippets=snippets,
+    )
+
+
+@router.get("/landscapes/{landscape_id}/concept-map", response_model=ConceptMapOut)
+def get_landscape_concept_map(landscape_id: str, s: Session = Depends(get_session)) -> ConceptMapOut:
+    if s.get(Landscape, landscape_id) is None:
+        raise HTTPException(404, "landscape not found")
+    concepts = [concept_to_dict(c) for c in _concept_rows(s, landscape_id)]
+    return ConceptMapOut.model_validate(build_concept_map(concepts))
+
+
+@router.get("/landscapes/{landscape_id}/graph", response_model=PaperGraphOut)
+def get_landscape_graph(landscape_id: str, s: Session = Depends(get_session)) -> PaperGraphOut:
+    landscape = s.get(Landscape, landscape_id)
+    if landscape is None:
+        raise HTTPException(404, "landscape not found")
+    links = s.exec(
+        select(LandscapePaper)
+        .where(LandscapePaper.landscape_id == landscape_id)
+        .order_by(LandscapePaper.score.desc())
+    ).all()
+    nodes: list[PaperGraphNode] = []
+    for link in links:
+        paper = s.get(Paper, link.paper_id)
+        if paper is None:
+            continue
+        nodes.append(
+            PaperGraphNode(
+                paper=PaperOut.model_validate(paper, from_attributes=True),
+                score=link.score,
+                category=link.category,
+                cluster_id=link.cluster_id,
+            )
+        )
+
+    rels = s.exec(
+        select(PaperRelationship)
+        .where(PaperRelationship.landscape_id == landscape_id)
+        .order_by(PaperRelationship.kind, PaperRelationship.src_paper_id, PaperRelationship.dst_paper_id)
+    ).all()
+    edges = [
+        PaperRelationshipOut(
+            source_paper_id=r.src_paper_id,
+            target_paper_id=r.dst_paper_id,
+            type=r.kind,
+            rationale=r.note,
+        )
+        for r in rels
+    ]
+    return PaperGraphOut(nodes=nodes, edges=edges)
+
+
 # ---------------------------------------------------------------------------
 # Papers
 # ---------------------------------------------------------------------------
@@ -141,9 +243,15 @@ def get_paper(paper_id: str, s: Session = Depends(get_session)) -> dict[str, Any
         select(PaperSection).where(PaperSection.paper_id == paper_id).order_by(PaperSection.ordinal)
     ).all()
     chunks = s.exec(select(Chunk).where(Chunk.paper_id == paper_id).order_by(Chunk.ordinal)).all()
+    extraction_data = _normalise_extraction_payload(extraction.data if extraction else None)
+    landscape_ids = [
+        x.landscape_id
+        for x in s.exec(select(LandscapePaper).where(LandscapePaper.paper_id == paper_id)).all()
+    ]
     return {
         "paper": PaperOut.model_validate(paper, from_attributes=True).model_dump(),
-        "extraction": extraction.data if extraction else None,
+        "extraction": extraction_data,
+        "landscape_ids": landscape_ids,
         "pdf": {
             "status": pdf.status if pdf else "missing",
             "bytes": pdf.bytes if pdf else None,
@@ -178,7 +286,33 @@ def get_paper_pdf(paper_id: str, s: Session = Depends(get_session)) -> FileRespo
     path = _pdf_file_path(pdf)
     if path is None:
         raise HTTPException(404, "local PDF not found")
+    # Serve inline — do NOT pass filename= (that triggers Content-Disposition: attachment).
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{path.name}"'},
+    )
+
+
+@router.get("/papers/{paper_id}/pdf/download")
+def download_paper_pdf(paper_id: str, s: Session = Depends(get_session)) -> FileResponse:
+    """Explicit download endpoint — sets Content-Disposition: attachment."""
+    paper = s.get(Paper, paper_id)
+    if paper is None:
+        raise HTTPException(404, "paper not found")
+    pdf = s.exec(select(PaperPdf).where(PaperPdf.paper_id == paper_id)).first()
+    path = _pdf_file_path(pdf)
+    if path is None:
+        raise HTTPException(404, "local PDF not found")
     return FileResponse(path, media_type="application/pdf", filename=path.name)
+
+
+def _concept_rows(s: Session, landscape_id: str) -> list[Concept]:
+    return s.exec(
+        select(Concept)
+        .where(Concept.landscape_id == landscape_id)
+        .order_by(Concept.importance.desc(), Concept.name)
+    ).all()
 
 
 def _pdf_file_exists(pdf: PaperPdf | None) -> bool:
@@ -212,20 +346,42 @@ async def job_events(job_id: str) -> EventSourceResponse:
 
     async def gen():  # type: ignore[no-untyped-def]
         last_seen = 0
-        while True:
-            with session_scope() as s:
-                job = s.get(SearchJob, job_id)
-                if job is None:
-                    yield {"event": "error", "data": json.dumps({"error": "job not found"})}
-                    return
-                events = list(job.events or [])
-                for ev in events[last_seen:]:
-                    yield {"event": "progress", "data": json.dumps(ev)}
-                last_seen = len(events)
-                if job.stage == "done" or job.stage == "failed":
-                    yield {"event": "complete", "data": json.dumps({"stage": job.stage})}
-                    return
-            await asyncio.sleep(1.0)
+        try:
+            while True:
+                with session_scope() as s:
+                    job = s.get(SearchJob, job_id)
+                    if job is None:
+                        yield {
+                            "event": "error",
+                            "data": json.dumps(
+                                {
+                                    "ts": datetime.utcnow().isoformat() + "Z",
+                                    "stage": "error",
+                                    "progress": 0,
+                                    "message": "job not found",
+                                    "meta": {"job_id": job_id},
+                                }
+                            ),
+                        }
+                        return
+                    events = list(job.events or [])
+                    for ev in events[last_seen:]:
+                        payload = _normalise_job_event(ev)
+                        yield {"event": "progress", "id": str(last_seen), "data": json.dumps(payload)}
+                        last_seen += 1
+                    if job.stage == "done" or job.stage == "failed":
+                        payload = {
+                            "ts": (job.finished_at or datetime.utcnow()).isoformat() + "Z",
+                            "stage": job.stage,
+                            "progress": job.progress,
+                            "message": "Pipeline complete" if job.stage == "done" else (job.error or "Pipeline failed"),
+                            "meta": {"job_id": job_id, "landscape_id": job.landscape_id},
+                        }
+                        yield {"event": "complete", "id": "final", "data": json.dumps(payload)}
+                        return
+                await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            return
 
     return EventSourceResponse(gen())
 
@@ -280,6 +436,70 @@ def patch_settings(_: SettingsPatch) -> SettingsOut:
 # ---------------------------------------------------------------------------
 @router.post("/landscapes/{landscape_id}/export/obsidian", response_model=ExportResult)
 def export_obsidian(landscape_id: str, body: ExportRequest, s: Session = Depends(get_session)) -> ExportResult:
+    landscape, plan, root = _build_export_plan(landscape_id, s, create_root=True)
+    push = body.push if body.push is not None else get_settings().obsidian_export_auto_push
+    try:
+        written, hashes, commit_sha, pushed = write_plan(
+            plan,
+            root=root,
+            commit_message=f"fieldmap: export landscape '{landscape.topic}' ({datetime.utcnow().isoformat()}Z)",
+            push=push,
+            force=body.force,
+        )
+    except Exception as e:
+        raise HTTPException(
+            500,
+            f"obsidian export failed: {type(e).__name__}: {e}. "
+            "Check that the configured repo path exists, is writable, and is a git working tree.",
+        )
+
+    # Record obsidian_exports rows.
+    for rel, digest in hashes:
+        existing = s.exec(
+            select(ObsidianExport).where(
+                ObsidianExport.landscape_id == landscape_id,
+                ObsidianExport.file_path == rel,
+            )
+        ).first()
+        if existing is None:
+            s.add(
+                ObsidianExport(
+                    landscape_id=landscape_id,
+                    file_path=rel,
+                    content_hash=digest,
+                    commit_sha=commit_sha,
+                    pushed=pushed,
+                )
+            )
+        else:
+            existing.content_hash = digest
+            existing.commit_sha = commit_sha
+            existing.pushed = pushed
+            s.add(existing)
+
+    return ExportResult(files=written, commit_sha=commit_sha, pushed=pushed)
+
+
+@router.get("/landscapes/{landscape_id}/export/preview", response_model=ExportPreviewOut)
+def export_preview_get(landscape_id: str, s: Session = Depends(get_session)) -> ExportPreviewOut:
+    return _export_preview(landscape_id, False, s)
+
+
+@router.post("/landscapes/{landscape_id}/export/preview", response_model=ExportPreviewOut)
+def export_preview_post(landscape_id: str, body: ExportRequest, s: Session = Depends(get_session)) -> ExportPreviewOut:
+    return _export_preview(landscape_id, body.force, s)
+
+
+def _export_preview(landscape_id: str, force: bool, s: Session) -> ExportPreviewOut:
+    _landscape, plan, root = _build_export_plan(landscape_id, s, create_root=False)
+    try:
+        preview = preview_plan(plan, root=root, force=force)
+    except Exception as e:
+        raise HTTPException(400, f"obsidian export preview failed: {type(e).__name__}: {e}")
+    return ExportPreviewOut(**preview.__dict__)
+
+
+def _build_export_plan(landscape_id: str, s: Session, *, create_root: bool):  # type: ignore[no-untyped-def]
     landscape = s.get(Landscape, landscape_id)
     if landscape is None:
         raise HTTPException(404, "landscape not found")
@@ -331,16 +551,19 @@ def export_obsidian(landscape_id: str, body: ExportRequest, s: Session = Depends
     flashcards = [
         {"front": f.front, "back": f.back, "kind": f.kind} for f in s.exec(select(Flashcard).where(Flashcard.landscape_id == landscape_id)).all()
     ]
+    concepts = [concept_to_dict(c) for c in _concept_rows(s, landscape_id)]
 
     try:
-        root = make_repo_root()
+        root = get_configured_repo_root(create=create_root)
+        if create_root:
+            root = make_repo_root()
     except PermissionError as e:
         raise HTTPException(
             500,
             f"obsidian export path not writable ({get_settings().obsidian_export_repo_path}): {e}. "
             "Fix the volume mount in docker-compose.yml or change OBSIDIAN_EXPORT_REPO_PATH.",
         )
-    except OSError as e:
+    except (OSError, ValueError) as e:
         raise HTTPException(
             500,
             f"obsidian export path error ({get_settings().obsidian_export_repo_path}): {e}.",
@@ -354,48 +577,28 @@ def export_obsidian(landscape_id: str, body: ExportRequest, s: Session = Depends
         quizzes=quizzes,
         flashcards=flashcards,
         extractions_by_paper=extractions_by_paper,
+        concepts=concepts,
         root=root,
         generated_at=landscape.updated_at.isoformat() + "Z",
     )
+    return landscape, plan, root
 
-    push = body.push if body.push is not None else get_settings().obsidian_export_auto_push
-    try:
-        written, hashes, commit_sha, pushed = write_plan(
-            plan,
-            root=root,
-            commit_message=f"fieldmap: export landscape '{landscape.topic}' ({datetime.utcnow().isoformat()}Z)",
-            push=push,
-            force=body.force,
-        )
-    except Exception as e:
-        raise HTTPException(
-            500,
-            f"obsidian export failed: {type(e).__name__}: {e}. "
-            "Check that the configured repo path exists, is writable, and is a git working tree.",
-        )
 
-    # Record obsidian_exports rows.
-    for rel, digest in hashes:
-        existing = s.exec(
-            select(ObsidianExport).where(
-                ObsidianExport.landscape_id == landscape_id,
-                ObsidianExport.file_path == rel,
-            )
-        ).first()
-        if existing is None:
-            s.add(
-                ObsidianExport(
-                    landscape_id=landscape_id,
-                    file_path=rel,
-                    content_hash=digest,
-                    commit_sha=commit_sha,
-                    pushed=pushed,
-                )
-            )
-        else:
-            existing.content_hash = digest
-            existing.commit_sha = commit_sha
-            existing.pushed = pushed
-            s.add(existing)
+def _normalise_extraction_payload(data: dict[str, Any] | None) -> dict[str, Any] | None:
+    if data is None:
+        return None
+    base = ExtractionSchema.model_validate(data).model_dump()
+    schema_keys = set(base.keys())
+    extra = {k: v for k, v in data.items() if k not in schema_keys}
+    base["extra_fields"] = extra
+    return base
 
-    return ExportResult(files=written, commit_sha=commit_sha, pushed=pushed)
+
+def _normalise_job_event(ev: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ts": ev.get("ts") or datetime.utcnow().isoformat() + "Z",
+        "stage": ev.get("stage") or "unknown",
+        "progress": ev.get("progress", 0),
+        "message": ev.get("message") or "",
+        "meta": ev.get("meta") or {},
+    }
