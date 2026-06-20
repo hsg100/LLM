@@ -12,6 +12,18 @@ export function apiUrl(path: string, isServer = typeof window === "undefined"): 
   return `${base.replace(/\/$/, "")}${path}`;
 }
 
+const DEFAULT_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS || 15000);
+
+function timeoutSignal(init?: RequestInit, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  if (init?.signal) return { signal: init.signal, cleanup: () => {} };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    cleanup: () => clearTimeout(timer),
+  };
+}
+
 async function readErrorBody(r: Response): Promise<string> {
   try {
     const ct = r.headers.get("content-type") || "";
@@ -25,12 +37,18 @@ async function readErrorBody(r: Response): Promise<string> {
   }
 }
 
-export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiGet<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
   let r: Response;
+  const timeout = timeoutSignal(init, timeoutMs);
   try {
-    r = await fetch(apiUrl(path), { cache: "no-store", ...init });
+    r = await fetch(apiUrl(path), { cache: "no-store", ...init, signal: timeout.signal });
   } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new Error(`GET ${path} → timed out after ${timeoutMs || DEFAULT_TIMEOUT_MS}ms`);
+    }
     throw new Error(`GET ${path} → network error: ${e?.message || e}`);
+  } finally {
+    timeout.cleanup();
   }
   if (!r.ok) {
     const body = await readErrorBody(r);
@@ -39,8 +57,9 @@ export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-export async function apiPost<T>(path: string, body: any, init?: RequestInit): Promise<T> {
+export async function apiPost<T>(path: string, body: any, init?: RequestInit, timeoutMs?: number): Promise<T> {
   let r: Response;
+  const timeout = timeoutSignal(init, timeoutMs);
   try {
     r = await fetch(apiUrl(path), {
       method: "POST",
@@ -48,9 +67,15 @@ export async function apiPost<T>(path: string, body: any, init?: RequestInit): P
       body: JSON.stringify(body),
       cache: "no-store",
       ...init,
+      signal: timeout.signal,
     });
   } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new Error(`POST ${path} → timed out after ${timeoutMs || DEFAULT_TIMEOUT_MS}ms`);
+    }
     throw new Error(`POST ${path} → network error: ${e?.message || e}`);
+  } finally {
+    timeout.cleanup();
   }
   if (!r.ok) {
     const errBody = await readErrorBody(r);

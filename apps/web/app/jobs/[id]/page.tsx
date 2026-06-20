@@ -16,6 +16,7 @@ const STAGE_DEFS: { key: string; label: string }[] = [
   { key: "parsing_pdfs", label: "Parsing PDFs" },
   { key: "extracting", label: "Extracting notes" },
   { key: "synthesising", label: "Synthesising landscape" },
+  { key: "concepts", label: "Generating concepts" },
   { key: "active_recall", label: "Quiz & flashcards" },
 ];
 const STAGE_INDEX: Record<string, number> = Object.fromEntries(
@@ -24,7 +25,8 @@ const STAGE_INDEX: Record<string, number> = Object.fromEntries(
 
 function fmtTime(iso: string): string {
   try {
-    return new Date(iso).toLocaleTimeString(undefined, { hour12: false });
+    const s = iso.endsWith("Z") ? iso : iso + "Z";
+    return new Date(s).toLocaleTimeString(undefined, { hour12: false });
   } catch {
     return iso;
   }
@@ -53,7 +55,23 @@ function detailFor(stageKey: string, events: JobEvent[]): string {
   // Pick the most recent event whose stage matches this key.
   const matching = events.filter((e) => e.stage === stageKey);
   const last = matching[matching.length - 1];
+  const meta = (last?.meta || {}) as Record<string, any>;
+  if (typeof meta.completed === "number" && typeof meta.total === "number" && meta.total > 0) {
+    return `${meta.completed} / ${meta.total} · ${Math.round(meta.percent ?? (meta.completed / meta.total) * 100)}%`;
+  }
   return last?.message.slice(0, 60) || "";
+}
+
+function countedStageProgress(stageKey: string, events: JobEvent[]): string | null {
+  if (stageKey !== "downloading_pdfs" && stageKey !== "parsing_pdfs") return null;
+  const matching = events.filter((e) => e.stage === stageKey && e.meta);
+  const last = matching[matching.length - 1];
+  const meta = (last?.meta || {}) as Record<string, any>;
+  if (typeof meta.completed !== "number" || typeof meta.total !== "number" || meta.total <= 0) {
+    return null;
+  }
+  const percent = Math.round(meta.percent ?? (meta.completed / meta.total) * 100);
+  return `${meta.completed} of ${meta.total} PDFs · ${percent}%`;
 }
 
 export default function JobPage({ params }: { params: { id: string } }) {
@@ -133,7 +151,8 @@ export default function JobPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     if (!job?.started_at) return;
-    const start = new Date(job.started_at).getTime();
+    const iso = job.started_at;
+    const start = new Date(iso.endsWith("Z") ? iso : iso + "Z").getTime();
     const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)));
     tick();
     if (job.stage === "done" || job.stage === "failed") return;
@@ -161,6 +180,7 @@ export default function JobPage({ params }: { params: { id: string } }) {
   });
 
   const progress = Math.round(((job?.progress ?? 0) as number) * 100);
+  const stageCountProgress = job ? countedStageProgress(job.stage, events) : null;
   const isDone = job?.stage === "done";
   const isFailed = job?.stage === "failed";
   const isRunning = !isDone && !isFailed;
@@ -283,6 +303,7 @@ export default function JobPage({ params }: { params: { id: string } }) {
           <span style={{ fontSize: 12, color: "var(--t3)" }}>
             {STAGE_DEFS[currentStageIdx]?.label ?? "—"} · stage{" "}
             {currentStageIdx >= 0 ? currentStageIdx + 1 : 0} of {STAGE_DEFS.length}
+            {stageCountProgress ? ` · ${stageCountProgress}` : ""}
           </span>
           <span
             className="font-mono"

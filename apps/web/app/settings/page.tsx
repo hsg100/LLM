@@ -29,12 +29,12 @@ export default async function SettingsPage() {
   let s: Settings | null = null;
   let embed: Embed | null = null;
   try {
-    s = await apiGet<Settings>("/api/settings");
+    s = await apiGet<Settings>("/api/settings", undefined, 8000);
   } catch {
     s = null;
   }
   try {
-    embed = await apiGet<Embed>("/ready/embeddings");
+    embed = await apiGet<Embed>("/ready/embeddings", undefined, 6000);
   } catch {
     embed = null;
   }

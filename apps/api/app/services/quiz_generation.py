@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Optional
 
 from app.services.llm import LLMProvider
@@ -14,6 +15,7 @@ async def generate_quizzes_and_flashcards(
     *,
     topic: str,
     landscape_papers: list[dict[str, Any]],
+    timeout_seconds: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not landscape_papers:
         return [], []
@@ -29,7 +31,8 @@ async def generate_quizzes_and_flashcards(
     ]
 
     try:
-        raw = await llm.complete_json(messages)
+        call = llm.complete_json(messages, stage="active_recall")
+        raw = await asyncio.wait_for(call, timeout=timeout_seconds) if timeout_seconds else await call
     except Exception:  # noqa: BLE001
         return _fallback_quizzes_and_flashcards(landscape_papers)
 

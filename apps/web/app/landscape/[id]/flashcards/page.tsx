@@ -50,102 +50,57 @@ export default function FlashcardsPage({ params }: { params: { id: string } }) {
   );
 
   return (
-    <>
-      {/* =================== MOBILE: full-bleed =================== */}
-      <div
-        className="md:hidden fm-learn-mobile"
-        style={{
-          minHeight: "100%",
-          display: "flex",
-          flexDirection: "column",
-          animation: "fm-fade .3s ease",
-        }}
-      >
-        {interior}
-        <LearnSwitch active="flashcards" landscapeId={params.id} />
-      </div>
-
-      {/* =================== DESKTOP: side-by-side layout =================== */}
-      <div
-        className="hidden md:flex"
-        style={{
-          minHeight: "100%",
-          gap: 40,
-          alignItems: "flex-start",
-          justifyContent: "center",
-          padding: "36px 40px 72px",
-          flexWrap: "wrap",
-          animation: "fm-fade .3s ease",
-        }}
-      >
-        <div style={{ maxWidth: 300, paddingTop: 16 }}>
-          <div
-            className="font-mono"
-            style={{
-              fontSize: 11,
-              color: "var(--accent-ink)",
-              letterSpacing: "0.1em",
-              marginBottom: 10,
-            }}
-          >
-            SPACED REVIEW
-          </div>
+    <div
+      className="fm-page"
+      style={{
+        maxWidth: 760,
+        margin: "0 auto",
+        padding: "30px 40px 72px",
+        animation: "fm-fade .3s ease",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-end", marginBottom: 18, flexWrap: "wrap" }}>
+        <div>
           <h1
             style={{
-              fontSize: 25,
+              fontSize: 22,
               fontWeight: 600,
-              letterSpacing: "-0.02em",
-              margin: "0 0 14px",
+              letterSpacing: 0,
+              margin: "0 0 7px",
             }}
           >
             Flashcards
           </h1>
           <p
             style={{
-              fontSize: 13.5,
-              lineHeight: 1.65,
+              fontSize: 13,
+              lineHeight: 1.55,
               color: "var(--t3)",
-              margin: "0 0 22px",
+              margin: 0,
             }}
           >
-            Tap the card to flip. Rate your recall — cards you miss come back
-            sooner. Concepts pulled from every paper in the landscape.
+            Tap the card to flip, then rate your recall.
           </p>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 12,
-              marginBottom: 22,
-            }}
-          >
-            <StatBox value={known} label="known" color="var(--good)" />
-            <StatBox value={review} label="review" color="var(--warn)" />
-          </div>
-          <Link
-            href={`/landscape/${params.id}/quiz`}
-            style={{ fontSize: 12, color: "var(--accent-ink)", textDecoration: "none" }}
-          >
-            Switch to quiz →
-          </Link>
         </div>
-
-        <div
-          style={{
-            flex: 1,
-            maxWidth: 520,
-            minWidth: 320,
-            border: "1px solid var(--bd)",
-            borderRadius: 18,
-            background: "var(--panel)",
-            overflow: "hidden",
-            boxShadow: "var(--shadow)",
-          }}
-        >
-          {interior}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <StatBox value={known} label="known" color="var(--good)" />
+          <StatBox value={review} label="review" color="var(--warn)" />
+          <LearnSwitch active="flashcards" landscapeId={params.id} />
         </div>
       </div>
-    </>
+
+      <div
+        style={{
+          border: "1px solid var(--bd)",
+          borderRadius: 8,
+          background: "var(--panel)",
+          overflow: "hidden",
+          boxShadow: "var(--shadow)",
+        }}
+      >
+        {interior}
+      </div>
+    </div>
   );
 }
 
@@ -162,13 +117,13 @@ function StatBox({
     <div
       style={{
         border: "1px solid var(--bd)",
-        borderRadius: 12,
+        borderRadius: 8,
         background: "var(--panel)",
-        padding: "14px 15px",
+        padding: "8px 12px",
         boxShadow: "var(--shadow)",
       }}
     >
-      <div className="font-mono" style={{ fontSize: 22, color }}>
+      <div className="font-mono" style={{ fontSize: 16, color }}>
         {value}
       </div>
       <div style={{ fontSize: 11, color: "var(--t3)", marginTop: 3 }}>{label}</div>
@@ -185,13 +140,10 @@ function LearnSwitch({
 }) {
   return (
     <div
-      className="fm-learn-switch"
       style={{
         display: "flex",
         gap: 6,
-        padding: "10px 16px 14px",
-        borderTop: "1px solid var(--bd2)",
-        background: "var(--bg)",
+        padding: 0,
       }}
     >
       <SwitchLink

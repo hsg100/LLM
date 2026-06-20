@@ -222,6 +222,10 @@ a:hover { text-decoration: underline; }
     grid-template-columns: 1fr !important;
   }
 
+  .fm-map-layout {
+    grid-template-columns: 1fr !important;
+  }
+
   .fm-mobile-wrap {
     flex-wrap: wrap !important;
   }

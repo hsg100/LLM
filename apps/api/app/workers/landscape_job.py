@@ -316,7 +316,12 @@ async def _run(job_id: str) -> None:
         _set_stage(job_id, "synthesising", 0.78, "Synthesising landscape")
         bundle = _load_landscape_bundle(job_id, paper_ids)
         llm_strong = get_llm(strong=True)
-        synthesis = await synthesise(llm_strong, topic=topic, landscape_papers=bundle)
+        synthesis = await synthesise(
+            llm_strong,
+            topic=topic,
+            landscape_papers=bundle,
+            timeout_seconds=settings.synthesis_timeout_seconds,
+        )
         synthesis_dict = synthesis.model_dump()
         synthesis_dict["content_quality"] = (
             "degraded"
@@ -325,6 +330,17 @@ async def _run(job_id: str) -> None:
         )
         synthesis_dict["extraction_quality"] = extraction_quality
         _persist_synthesis(job_id, synthesis_dict, bundle)
+        _append_event(
+            job_id,
+            "synthesising",
+            "Synthesis ready",
+            0.84,
+            meta={
+                "content_quality": synthesis_dict.get("content_quality"),
+                "clusters": len(synthesis_dict.get("clusters") or []),
+                "reading_path_items": len(synthesis_dict.get("reading_path") or []),
+            },
+        )
 
         # ----- 7b. Concept glossary -----
         _set_stage(job_id, "concepts", 0.86, "Generating concept layer")
@@ -334,6 +350,7 @@ async def _run(job_id: str) -> None:
                 topic=topic,
                 landscape_papers=bundle,
                 synthesis=synthesis_dict,
+                timeout_seconds=settings.concept_timeout_seconds,
             )
             persisted = _persist_concepts_for_job(job_id, concepts)
             _append_event(
@@ -365,7 +382,10 @@ async def _run(job_id: str) -> None:
         # ----- 8. Active recall -----
         _set_stage(job_id, "active_recall", 0.9, "Generating quiz + flashcards")
         quizzes, flashcards = await generate_quizzes_and_flashcards(
-            llm_fast, topic=topic, landscape_papers=bundle
+            llm_fast,
+            topic=topic,
+            landscape_papers=bundle,
+            timeout_seconds=settings.active_recall_timeout_seconds,
         )
         _persist_quiz_and_flashcards(job_id, quizzes, flashcards)
 
@@ -469,53 +489,163 @@ def _load_landscape_paper_meta(job_id: str, paper_ids: dict[str, str]) -> dict[s
 
 
 async def _download_and_parse(job_id: str, ranked, paper_ids: dict[str, str]) -> None:  # type: ignore[no-untyped-def]
-    total = len(ranked)
-    sem = asyncio.Semaphore(4)
+    items: list[tuple[PaperCandidate, str]] = []
+    for r in ranked:
+        cand: PaperCandidate = r.candidate
+        paper_id = paper_ids.get(cand.external_id)
+        if paper_id and cand.pdf_url:
+            items.append((cand, paper_id))
 
-    async def one(idx: int, r) -> None:  # type: ignore[no-untyped-def]
-        async with sem:
-            cand: PaperCandidate = r.candidate
-            paper_id = paper_ids.get(cand.external_id)
-            if paper_id is None or not cand.pdf_url:
-                return
-            pdf_bytes: bytes | None = None
+    total = len(items)
+    if total == 0:
+        _append_event(job_id, "downloading_pdfs", "skipped — no downloadable PDFs", 0.48)
+        return
+
+    download_sem = asyncio.Semaphore(4)
+    parse_sem = asyncio.Semaphore(3)
+    counter_lock = asyncio.Lock()
+    downloaded: list[dict[str, Any]] = []
+    download_done = 0
+    parse_done = 0
+    parse_total = total
+
+    async def mark_download(cand: PaperCandidate, paper_id: str, status: str, message: str, extra: dict[str, Any] | None = None) -> None:
+        nonlocal download_done
+        async with counter_lock:
+            download_done += 1
+            completed = download_done
+        ratio = completed / max(1, total)
+        _append_event(
+            job_id,
+            "downloading_pdfs",
+            message,
+            round(0.3 + 0.12 * ratio, 3),
+            meta={
+                "paper_id": paper_id,
+                "paper_title": cand.title,
+                "status": status,
+                "completed": completed,
+                "total": total,
+                "percent": round(ratio * 100),
+                **(extra or {}),
+            },
+        )
+
+    async def mark_parse(cand: PaperCandidate, paper_id: str, status: str, message: str, extra: dict[str, Any] | None = None) -> None:
+        nonlocal parse_done
+        async with counter_lock:
+            parse_done += 1
+            completed = parse_done
+        ratio = completed / max(1, parse_total)
+        _append_event(
+            job_id,
+            "parsing_pdfs",
+            message,
+            round(0.42 + 0.06 * ratio, 3),
+            meta={
+                "paper_id": paper_id,
+                "paper_title": cand.title,
+                "status": status,
+                "completed": completed,
+                "total": parse_total,
+                "percent": round(ratio * 100),
+                **(extra or {}),
+            },
+        )
+
+    async def download_one(cand: PaperCandidate, paper_id: str) -> None:
+        if not cand.pdf_url:
+            await mark_download(cand, paper_id, "skipped", f"{cand.title[:80]} — no PDF URL")
+            return
+        async with download_sem:
             storage_path: str | None = None
+            already_parsed = False
             with session_scope() as s:
                 pdf_row = s.exec(select(PaperPdf).where(PaperPdf.paper_id == paper_id)).first()
                 if pdf_row and pdf_row.storage_path:
                     existing_path = resolve_pdf_storage_path(pdf_row.storage_path)
                     if existing_path and existing_path.exists():
                         storage_path = pdf_row.storage_path
-                        pdf_bytes = existing_path.read_bytes()
-                        if pdf_row.status == "ok" and pdf_row.parsed_markdown:
-                            return  # cached
-            if pdf_bytes is None:
-                try:
-                    pdf_bytes = await download_pdf(cand.pdf_url, get_settings().max_pdf_mb)
-                except Exception as e:  # noqa: BLE001
-                    with session_scope() as s:
-                        pdf_row = s.exec(select(PaperPdf).where(PaperPdf.paper_id == paper_id)).first()
-                        if pdf_row is None:
-                            pdf_row = PaperPdf(paper_id=paper_id)
-                        pdf_row.status = "failed"
-                        pdf_row.error = f"download failed: {e!s}"
-                        s.add(pdf_row)
-                    return
-                storage_path, _path, _written = store_pdf_bytes(
-                    pdf_bytes,
-                    deterministic_pdf_filename(
-                        year=cand.year,
-                        title=cand.title,
-                        arxiv_id=cand.arxiv_id,
-                        paper_id=paper_id,
-                    ),
+                        already_parsed = pdf_row.status == "ok" and bool(pdf_row.parsed_markdown)
+            if storage_path is not None:
+                downloaded.append(
+                    {
+                        "cand": cand,
+                        "paper_id": paper_id,
+                        "storage_path": storage_path,
+                        "already_parsed": already_parsed,
+                    }
                 )
+                await mark_download(cand, paper_id, "cached", f"{cand.title[:80]} — cached PDF")
+                return
+            try:
+                pdf_bytes = await download_pdf(cand.pdf_url, get_settings().max_pdf_mb)
+            except Exception as e:  # noqa: BLE001
+                with session_scope() as s:
+                    pdf_row = s.exec(select(PaperPdf).where(PaperPdf.paper_id == paper_id)).first()
+                    if pdf_row is None:
+                        pdf_row = PaperPdf(paper_id=paper_id)
+                    pdf_row.status = "failed"
+                    pdf_row.error = f"download failed: {e!s}"
+                    s.add(pdf_row)
+                await mark_download(
+                    cand,
+                    paper_id,
+                    "failed",
+                    f"{cand.title[:80]} — download failed",
+                    {"error_type": type(e).__name__, "error_message": str(e)[:240]},
+                )
+                return
+            storage_path, _path, written = store_pdf_bytes(
+                pdf_bytes,
+                deterministic_pdf_filename(
+                    year=cand.year,
+                    title=cand.title,
+                    arxiv_id=cand.arxiv_id,
+                    paper_id=paper_id,
+                ),
+            )
+            with session_scope() as s:
+                pdf_row = s.exec(select(PaperPdf).where(PaperPdf.paper_id == paper_id)).first()
+                if pdf_row is None:
+                    pdf_row = PaperPdf(paper_id=paper_id)
+                pdf_row.storage_path = storage_path
+                pdf_row.bytes = len(pdf_bytes)
+                s.add(pdf_row)
+            downloaded.append(
+                {
+                    "cand": cand,
+                    "paper_id": paper_id,
+                    "storage_path": storage_path,
+                    "already_parsed": False,
+                }
+            )
+            await mark_download(
+                cand,
+                paper_id,
+                "downloaded",
+                f"{cand.title[:80]} — downloaded PDF",
+                {"bytes": len(pdf_bytes), "written": written},
+            )
+
+    async def parse_one(item: dict[str, Any]) -> None:
+        cand: PaperCandidate = item["cand"]
+        paper_id = item["paper_id"]
+        if item.get("already_parsed"):
+            await mark_parse(cand, paper_id, "cached", f"{cand.title[:80]} — parsed PDF cached")
+            return
+        async with parse_sem:
+            path = resolve_pdf_storage_path(item.get("storage_path"))
+            if path is None or not path.exists():
+                await mark_parse(cand, paper_id, "failed", f"{cand.title[:80]} — local PDF missing")
+                return
+            pdf_bytes = path.read_bytes()
             parsed = parse_pdf_bytes(pdf_bytes)
             with session_scope() as s:
                 pdf_row = s.exec(select(PaperPdf).where(PaperPdf.paper_id == paper_id)).first()
                 if pdf_row is None:
                     pdf_row = PaperPdf(paper_id=paper_id)
-                pdf_row.storage_path = storage_path or pdf_row.storage_path
+                pdf_row.storage_path = item.get("storage_path") or pdf_row.storage_path
                 pdf_row.bytes = len(pdf_bytes)
                 if parsed.ok:
                     pdf_row.status = "ok"
@@ -527,15 +657,31 @@ async def _download_and_parse(job_id: str, ranked, paper_ids: dict[str, str]) ->
                 s.add(pdf_row)
                 if parsed.ok:
                     _replace_sections_and_chunks(s, paper_id, parsed.sections)
-            prog = 0.3 + 0.18 * ((idx + 1) / max(1, total))
-            _append_event(
-                job_id,
-                "parsing_pdfs",
+            await mark_parse(
+                cand,
+                paper_id,
+                "ok" if parsed.ok else "failed",
                 f"{cand.title[:80]} — {'ok' if parsed.ok else parsed.error}",
-                round(prog, 3),
+                {"bytes": len(pdf_bytes), "sections": len(parsed.sections) if parsed.ok else 0},
             )
 
-    await asyncio.gather(*(one(i, r) for i, r in enumerate(ranked)))
+    _set_stage(
+        job_id,
+        "downloading_pdfs",
+        0.3,
+        f"Downloading PDFs: 0 / {total}",
+        meta={"completed": 0, "total": total, "percent": 0},
+    )
+    await asyncio.gather(*(download_one(cand, paper_id) for cand, paper_id in items))
+    parse_total = len(downloaded)
+    _set_stage(
+        job_id,
+        "parsing_pdfs",
+        0.42,
+        f"Parsing PDFs: 0 / {parse_total}",
+        meta={"completed": 0, "total": parse_total, "percent": 0, "downloaded": len(downloaded)},
+    )
+    await asyncio.gather(*(parse_one(item) for item in downloaded))
     _set_stage(job_id, "parsing_pdfs", 0.48, "PDF parsing complete")
 
 

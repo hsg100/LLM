@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     pdf_storage_dir: str = "/data/pdfs"
     max_candidates: int = 80
     max_paper_text_chars: int = 9000
+    synthesis_timeout_seconds: int = 75
+    concept_timeout_seconds: int = 75
+    active_recall_timeout_seconds: int = 75
 
     # Runtime + robustness knobs
     env: str = "development"  # development | production

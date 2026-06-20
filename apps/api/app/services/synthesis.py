@@ -12,6 +12,7 @@ never empty.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections import Counter
@@ -81,6 +82,7 @@ async def synthesise(
     topic: str,
     landscape_papers: list[dict[str, Any]],
     strong_model: Optional[str] = None,
+    timeout_seconds: Optional[int] = None,
 ) -> Synthesis:
     skeleton = _deterministic_skeleton(landscape_papers)
     if not landscape_papers:
@@ -97,7 +99,8 @@ async def synthesise(
     ]
 
     try:
-        raw = await llm.complete_json(messages, model=strong_model)
+        call = llm.complete_json(messages, model=strong_model, stage="synthesis")
+        raw = await asyncio.wait_for(call, timeout=timeout_seconds) if timeout_seconds else await call
         try:
             synth = Synthesis.model_validate(raw)
         except ValidationError:

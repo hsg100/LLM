@@ -22,22 +22,29 @@ export default function ExportPage({ params }: { params: { id: string } }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [pushOn, setPushOn] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [result, setResult] = useState<ExportResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   useEffect(() => {
+    setLoading(true);
+    setLoadErr(null);
     Promise.all([
-      apiGet<Landscape>(`/api/landscapes/${params.id}`),
-      apiGet<LandscapePaper[]>(`/api/landscapes/${params.id}/papers`).catch(() => []),
-      apiGet<Settings>("/api/settings").catch(() => null),
-    ]).then(([l, p, s]) => {
-      setLandscape(l);
-      setPapers(p);
-      if (s) {
-        setSettings(s);
-        setPushOn(!!s.obsidian_export_auto_push);
-      }
-    });
+      apiGet<Landscape>(`/api/landscapes/${params.id}`, undefined, 10000),
+      apiGet<LandscapePaper[]>(`/api/landscapes/${params.id}/papers`, undefined, 10000).catch(() => []),
+      apiGet<Settings>("/api/settings", undefined, 8000).catch(() => null),
+    ])
+      .then(([l, p, s]) => {
+        setLandscape(l);
+        setPapers(p);
+        if (s) {
+          setSettings(s);
+          setPushOn(!!s.obsidian_export_auto_push);
+        }
+      })
+      .catch((e: any) => setLoadErr(e.message || "Failed to load export preview"))
+      .finally(() => setLoading(false));
   }, [params.id]);
 
   async function exportNow() {
@@ -47,7 +54,9 @@ export default function ExportPage({ params }: { params: { id: string } }) {
     try {
       const res = await apiPost<ExportResult>(
         `/api/landscapes/${params.id}/export/obsidian`,
-        { push: pushOn }
+        { push: pushOn },
+        undefined,
+        120000
       );
       setResult(res);
     } catch (e: any) {
@@ -115,6 +124,22 @@ export default function ExportPage({ params }: { params: { id: string } }) {
         files are written (SHA-256 content hash), then committed.
       </p>
 
+      {loadErr && (
+        <div
+          style={{
+            fontSize: 12,
+            color: "var(--bad)",
+            background: "rgba(207,77,111,.10)",
+            border: "1px solid var(--bad)",
+            borderRadius: 12,
+            padding: "10px 14px",
+            marginBottom: 18,
+          }}
+        >
+          {loadErr}
+        </div>
+      )}
+
       <div
         className="fm-mobile-grid-one"
         style={{
@@ -156,7 +181,7 @@ export default function ExportPage({ params }: { params: { id: string } }) {
               className="font-mono"
               style={{ marginLeft: "auto", fontSize: 10, color: "var(--t4)" }}
             >
-              {previewFiles.length} files · {changed} {result ? "written" : "to write"}
+              {loading ? "loading preview" : `${previewFiles.length} files · ${changed} ${result ? "written" : "to write"}`}
             </span>
           </div>
 
@@ -253,7 +278,7 @@ export default function ExportPage({ params }: { params: { id: string } }) {
                 wordBreak: "break-all",
               }}
             >
-              {settings?.obsidian_export_repo_path ?? "(loading…)"}
+              {settings?.obsidian_export_repo_path ?? (loading ? "(loading…)" : "(settings unavailable)")}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span

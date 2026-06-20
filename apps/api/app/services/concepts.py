@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections import Counter, defaultdict
@@ -93,6 +94,7 @@ async def generate_concept_glossary(
     landscape_papers: list[dict[str, Any]],
     synthesis: dict[str, Any],
     max_concepts: int = 36,
+    timeout_seconds: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     candidates = collect_concept_candidates(landscape_papers, synthesis, max_candidates=max_concepts)
     meta: dict[str, Any] = {
@@ -110,7 +112,8 @@ async def generate_concept_glossary(
         return concepts, meta
 
     try:
-        definitions = await _define_with_llm(llm, topic=topic, concepts=concepts, landscape_papers=landscape_papers)
+        call = _define_with_llm(llm, topic=topic, concepts=concepts, landscape_papers=landscape_papers)
+        definitions = await asyncio.wait_for(call, timeout=timeout_seconds) if timeout_seconds else await call
         concepts = _merge_llm_definitions(concepts, definitions)
         meta["llm_definitions_used"] = True
     except Exception as e:  # noqa: BLE001
