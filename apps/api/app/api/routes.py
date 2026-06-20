@@ -1,0 +1,401 @@
+"""HTTP API routes.
+
+Routes are intentionally thin: they translate request shapes into ORM
+calls and back. All heavy lifting lives in services/workers.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
+from sqlmodel import Session, select
+from sse_starlette.sse import EventSourceResponse
+
+from app.config import get_settings
+from app.db import get_session, session_scope
+from app.exporters.obsidian_git import (
+    make_repo_root,
+    render_landscape_export,
+    write_plan,
+)
+from app.models import (
+    Chunk,
+    Extraction,
+    Flashcard,
+    Landscape,
+    LandscapePaper,
+    ObsidianExport,
+    Paper,
+    PaperPdf,
+    PaperSection,
+    Quiz,
+    SearchJob,
+)
+from app.schemas import (
+    ExportRequest,
+    ExportResult,
+    FlashcardOut,
+    JobOut,
+    LandscapeCreate,
+    LandscapeOut,
+    LandscapePaperOut,
+    PaperOut,
+    QuizOut,
+    SettingsOut,
+    SettingsPatch,
+)
+from app.services.pdf_storage import resolve_pdf_storage_path
+from app.workers.landscape_job import run_landscape_job
+from app.workers.queue import get_queue
+
+
+router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Landscapes
+# ---------------------------------------------------------------------------
+@router.post("/landscapes", response_model=dict)
+def create_landscape(body: LandscapeCreate, s: Session = Depends(get_session)) -> dict[str, str]:
+    landscape = Landscape(
+        topic=body.topic,
+        settings={
+            "max_papers": body.max_papers or get_settings().max_papers_per_landscape,
+            "sources": body.sources,
+            "parse_pdfs": body.parse_pdfs,
+            **(body.settings or {}),
+        },
+        status="queued",
+    )
+    s.add(landscape)
+    s.flush()
+
+    job = SearchJob(landscape_id=landscape.id, stage="queued", progress=0.0)
+    s.add(job)
+    s.flush()
+
+    # Enqueue background work.
+    try:
+        get_queue().enqueue(run_landscape_job, job.id, job_timeout=3600)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"failed to enqueue: {e!s}")
+    return {"landscape_id": landscape.id, "job_id": job.id}
+
+
+@router.get("/landscapes", response_model=list[LandscapeOut])
+def list_landscapes(s: Session = Depends(get_session)) -> list[LandscapeOut]:
+    rows = s.exec(select(Landscape).order_by(Landscape.created_at.desc())).all()
+    return [LandscapeOut.model_validate(r, from_attributes=True) for r in rows]
+
+
+@router.get("/landscapes/{landscape_id}", response_model=LandscapeOut)
+def get_landscape(landscape_id: str, s: Session = Depends(get_session)) -> LandscapeOut:
+    row = s.get(Landscape, landscape_id)
+    if row is None:
+        raise HTTPException(404, "landscape not found")
+    return LandscapeOut.model_validate(row, from_attributes=True)
+
+
+@router.get("/landscapes/{landscape_id}/papers", response_model=list[LandscapePaperOut])
+def get_landscape_papers(landscape_id: str, s: Session = Depends(get_session)) -> list[LandscapePaperOut]:
+    links = s.exec(
+        select(LandscapePaper)
+        .where(LandscapePaper.landscape_id == landscape_id)
+        .order_by(LandscapePaper.score.desc())
+    ).all()
+    out: list[LandscapePaperOut] = []
+    for link in links:
+        paper = s.get(Paper, link.paper_id)
+        if paper is None:
+            continue
+        out.append(
+            LandscapePaperOut(
+                paper=PaperOut.model_validate(paper, from_attributes=True),
+                score=link.score,
+                category=link.category,
+                rationale=link.rationale,
+                cluster_id=link.cluster_id,
+                reading_order=link.reading_order,
+            )
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Papers
+# ---------------------------------------------------------------------------
+@router.get("/papers/{paper_id}", response_model=dict)
+def get_paper(paper_id: str, s: Session = Depends(get_session)) -> dict[str, Any]:
+    paper = s.get(Paper, paper_id)
+    if paper is None:
+        raise HTTPException(404, "paper not found")
+    extraction = s.exec(select(Extraction).where(Extraction.paper_id == paper_id)).first()
+    pdf = s.exec(select(PaperPdf).where(PaperPdf.paper_id == paper_id)).first()
+    sections = s.exec(
+        select(PaperSection).where(PaperSection.paper_id == paper_id).order_by(PaperSection.ordinal)
+    ).all()
+    chunks = s.exec(select(Chunk).where(Chunk.paper_id == paper_id).order_by(Chunk.ordinal)).all()
+    return {
+        "paper": PaperOut.model_validate(paper, from_attributes=True).model_dump(),
+        "extraction": extraction.data if extraction else None,
+        "pdf": {
+            "status": pdf.status if pdf else "missing",
+            "bytes": pdf.bytes if pdf else None,
+            "error": pdf.error if pdf else None,
+            "url": f"/api/papers/{paper_id}/pdf" if _pdf_file_exists(pdf) else None,
+            "storage_path": pdf.storage_path if pdf and _pdf_file_exists(pdf) else None,
+        },
+        "sections": [{"heading": x.heading, "content": x.content[:6000]} for x in sections],
+        "chunks": [
+            {
+                "id": x.id,
+                "section_id": x.section_id,
+                "section": x.section_heading,
+                "page_start": x.page_start,
+                "page_end": x.page_end,
+                "ordinal": x.ordinal,
+                "char_start": x.char_start,
+                "char_end": x.char_end,
+                "content": x.content[:1200],
+            }
+            for x in chunks
+        ],
+    }
+
+
+@router.get("/papers/{paper_id}/pdf")
+def get_paper_pdf(paper_id: str, s: Session = Depends(get_session)) -> FileResponse:
+    paper = s.get(Paper, paper_id)
+    if paper is None:
+        raise HTTPException(404, "paper not found")
+    pdf = s.exec(select(PaperPdf).where(PaperPdf.paper_id == paper_id)).first()
+    path = _pdf_file_path(pdf)
+    if path is None:
+        raise HTTPException(404, "local PDF not found")
+    return FileResponse(path, media_type="application/pdf", filename=path.name)
+
+
+def _pdf_file_exists(pdf: PaperPdf | None) -> bool:
+    return _pdf_file_path(pdf) is not None
+
+
+def _pdf_file_path(pdf: PaperPdf | None) -> Path | None:
+    if pdf is None or not pdf.storage_path:
+        return None
+    path = resolve_pdf_storage_path(pdf.storage_path)
+    if path is None or not path.exists() or not path.is_file():
+        return None
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Jobs
+# ---------------------------------------------------------------------------
+@router.get("/jobs/{job_id}", response_model=JobOut)
+def get_job(job_id: str, s: Session = Depends(get_session)) -> JobOut:
+    job = s.get(SearchJob, job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    return JobOut.model_validate(job, from_attributes=True)
+
+
+@router.get("/jobs/{job_id}/events")
+async def job_events(job_id: str) -> EventSourceResponse:
+    """SSE stream of job events. Polls the DB on a short interval — good
+    enough for an alpha and avoids inventing a separate pubsub channel."""
+
+    async def gen():  # type: ignore[no-untyped-def]
+        last_seen = 0
+        while True:
+            with session_scope() as s:
+                job = s.get(SearchJob, job_id)
+                if job is None:
+                    yield {"event": "error", "data": json.dumps({"error": "job not found"})}
+                    return
+                events = list(job.events or [])
+                for ev in events[last_seen:]:
+                    yield {"event": "progress", "data": json.dumps(ev)}
+                last_seen = len(events)
+                if job.stage == "done" or job.stage == "failed":
+                    yield {"event": "complete", "data": json.dumps({"stage": job.stage})}
+                    return
+            await asyncio.sleep(1.0)
+
+    return EventSourceResponse(gen())
+
+
+# ---------------------------------------------------------------------------
+# Quiz + flashcards
+# ---------------------------------------------------------------------------
+@router.get("/landscapes/{landscape_id}/quiz", response_model=list[QuizOut])
+def get_quiz(landscape_id: str, s: Session = Depends(get_session)) -> list[QuizOut]:
+    rows = s.exec(select(Quiz).where(Quiz.landscape_id == landscape_id)).all()
+    return [QuizOut.model_validate(r, from_attributes=True) for r in rows]
+
+
+@router.get("/landscapes/{landscape_id}/flashcards", response_model=list[FlashcardOut])
+def get_flashcards(landscape_id: str, s: Session = Depends(get_session)) -> list[FlashcardOut]:
+    rows = s.exec(select(Flashcard).where(Flashcard.landscape_id == landscape_id)).all()
+    return [FlashcardOut.model_validate(r, from_attributes=True) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+@router.get("/settings", response_model=SettingsOut)
+def get_settings_route() -> SettingsOut:
+    s = get_settings()
+    return SettingsOut(
+        llm_provider=s.llm_provider,
+        llm_model_fast=s.llm_model_fast,
+        llm_model_strong=s.llm_model_strong,
+        embedding_provider=s.embedding_provider,
+        embedding_model=s.embedding_model,
+        embedding_dim=s.embedding_dim,
+        obsidian_export_repo_path=s.obsidian_export_repo_path,
+        obsidian_export_auto_push=s.obsidian_export_auto_push,
+        max_papers_per_landscape=s.max_papers_per_landscape,
+        has_openai_key=bool(s.openai_api_key),
+        has_deepseek_key=bool(s.deepseek_api_key),
+        has_anthropic_key=bool(s.anthropic_api_key),
+    )
+
+
+@router.patch("/settings", response_model=SettingsOut)
+def patch_settings(_: SettingsPatch) -> SettingsOut:
+    # We deliberately don't mutate runtime env from PATCH in v1 — settings
+    # live in .env. This endpoint exists to keep the contract stable for the
+    # frontend; it returns the current view.
+    return get_settings_route()
+
+
+# ---------------------------------------------------------------------------
+# Obsidian export
+# ---------------------------------------------------------------------------
+@router.post("/landscapes/{landscape_id}/export/obsidian", response_model=ExportResult)
+def export_obsidian(landscape_id: str, body: ExportRequest, s: Session = Depends(get_session)) -> ExportResult:
+    landscape = s.get(Landscape, landscape_id)
+    if landscape is None:
+        raise HTTPException(404, "landscape not found")
+
+    links = s.exec(
+        select(LandscapePaper).where(LandscapePaper.landscape_id == landscape_id)
+    ).all()
+    if not links:
+        raise HTTPException(400, "landscape has no papers — run the pipeline first")
+
+    landscape_papers: list[dict[str, Any]] = []
+    extractions_by_paper: dict[str, dict[str, Any]] = {}
+    for link in links:
+        paper = s.get(Paper, link.paper_id)
+        if paper is None:
+            continue
+        ext = s.exec(select(Extraction).where(Extraction.paper_id == link.paper_id)).first()
+        if ext:
+            extractions_by_paper[paper.id] = ext.data
+        pdf = s.exec(select(PaperPdf).where(PaperPdf.paper_id == paper.id)).first()
+        pdf_path = _pdf_file_path(pdf)
+        landscape_papers.append(
+            {
+                "paper_id": paper.id,
+                "title": paper.title,
+                "year": paper.year,
+                "venue": paper.venue,
+                "authors": paper.authors,
+                "url": paper.url,
+                "pdf_url": paper.pdf_url,
+                "pdf_filename": pdf_path.name if pdf_path else None,
+                "pdf_source_path": str(pdf_path) if pdf_path else None,
+                "arxiv_id": paper.arxiv_id,
+                "category": link.category,
+                "score": link.score,
+                "rationale": link.rationale,
+            }
+        )
+
+    quizzes = [
+        {
+            "question": q.question,
+            "options": q.options,
+            "correct_index": q.correct_index,
+            "explanation": q.explanation,
+        }
+        for q in s.exec(select(Quiz).where(Quiz.landscape_id == landscape_id)).all()
+    ]
+    flashcards = [
+        {"front": f.front, "back": f.back, "kind": f.kind} for f in s.exec(select(Flashcard).where(Flashcard.landscape_id == landscape_id)).all()
+    ]
+
+    try:
+        root = make_repo_root()
+    except PermissionError as e:
+        raise HTTPException(
+            500,
+            f"obsidian export path not writable ({get_settings().obsidian_export_repo_path}): {e}. "
+            "Fix the volume mount in docker-compose.yml or change OBSIDIAN_EXPORT_REPO_PATH.",
+        )
+    except OSError as e:
+        raise HTTPException(
+            500,
+            f"obsidian export path error ({get_settings().obsidian_export_repo_path}): {e}.",
+        )
+
+    plan = render_landscape_export(
+        topic=landscape.topic,
+        landscape_id=landscape_id,
+        synthesis=landscape.synthesis or {},
+        landscape_papers=landscape_papers,
+        quizzes=quizzes,
+        flashcards=flashcards,
+        extractions_by_paper=extractions_by_paper,
+        root=root,
+        generated_at=landscape.updated_at.isoformat() + "Z",
+    )
+
+    push = body.push if body.push is not None else get_settings().obsidian_export_auto_push
+    try:
+        written, hashes, commit_sha, pushed = write_plan(
+            plan,
+            root=root,
+            commit_message=f"fieldmap: export landscape '{landscape.topic}' ({datetime.utcnow().isoformat()}Z)",
+            push=push,
+            force=body.force,
+        )
+    except Exception as e:
+        raise HTTPException(
+            500,
+            f"obsidian export failed: {type(e).__name__}: {e}. "
+            "Check that the configured repo path exists, is writable, and is a git working tree.",
+        )
+
+    # Record obsidian_exports rows.
+    for rel, digest in hashes:
+        existing = s.exec(
+            select(ObsidianExport).where(
+                ObsidianExport.landscape_id == landscape_id,
+                ObsidianExport.file_path == rel,
+            )
+        ).first()
+        if existing is None:
+            s.add(
+                ObsidianExport(
+                    landscape_id=landscape_id,
+                    file_path=rel,
+                    content_hash=digest,
+                    commit_sha=commit_sha,
+                    pushed=pushed,
+                )
+            )
+        else:
+            existing.content_hash = digest
+            existing.commit_sha = commit_sha
+            existing.pushed = pushed
+            s.add(existing)
+
+    return ExportResult(files=written, commit_sha=commit_sha, pushed=pushed)

@@ -1,0 +1,148 @@
+// Single place that knows the API base URL. On the server we use the
+// internal docker hostname; on the client we use the public one.
+
+export const API_PUBLIC = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_INTERNAL = process.env.API_URL_INTERNAL || API_PUBLIC;
+
+export function apiUrl(path: string, isServer = typeof window === "undefined"): string {
+  const base = isServer ? API_INTERNAL : API_PUBLIC;
+  return `${base.replace(/\/$/, "")}${path}`;
+}
+
+async function readErrorBody(r: Response): Promise<string> {
+  try {
+    const ct = r.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      const j = await r.json();
+      return typeof j?.detail === "string" ? j.detail : JSON.stringify(j);
+    }
+    return (await r.text()).slice(0, 400);
+  } catch {
+    return "";
+  }
+}
+
+export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
+  let r: Response;
+  try {
+    r = await fetch(apiUrl(path), { cache: "no-store", ...init });
+  } catch (e: any) {
+    throw new Error(`GET ${path} → network error: ${e?.message || e}`);
+  }
+  if (!r.ok) {
+    const body = await readErrorBody(r);
+    throw new Error(`GET ${path} → ${r.status}${body ? ` — ${body}` : ""}`);
+  }
+  return r.json() as Promise<T>;
+}
+
+export async function apiPost<T>(path: string, body: any, init?: RequestInit): Promise<T> {
+  let r: Response;
+  try {
+    r = await fetch(apiUrl(path), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      ...init,
+    });
+  } catch (e: any) {
+    throw new Error(`POST ${path} → network error: ${e?.message || e}`);
+  }
+  if (!r.ok) {
+    const errBody = await readErrorBody(r);
+    throw new Error(`POST ${path} → ${r.status}${errBody ? ` — ${errBody}` : ""}`);
+  }
+  return r.json() as Promise<T>;
+}
+
+// ---------------- Shared types (frontend mirror of backend Pydantic) ---
+export type Paper = {
+  id: string;
+  source: string;
+  external_id: string;
+  title: string;
+  abstract: string | null;
+  authors: string[];
+  year: number | null;
+  venue: string | null;
+  citation_count: number | null;
+  pdf_url: string | null;
+  arxiv_id: string | null;
+  url: string | null;
+};
+
+export type LandscapePaper = {
+  paper: Paper;
+  score: number;
+  category: "must-read" | "useful" | "optional" | "skip-for-now";
+  rationale: string | null;
+  cluster_id: string | null;
+  reading_order: number | null;
+};
+
+export type Landscape = {
+  id: string;
+  topic: string;
+  status: string;
+  synthesis: any;
+  settings: any;
+  created_at: string;
+  updated_at: string;
+};
+
+export type JobEvent = {
+  ts: string;
+  stage: string;
+  message: string;
+  progress: number;
+  meta?: Record<string, any> | null;
+};
+export type Job = {
+  id: string;
+  landscape_id: string;
+  stage: string;
+  progress: number;
+  events: JobEvent[];
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type Quiz = {
+  id: string;
+  question: string;
+  options: string[];
+  correct_index: number;
+  explanation: string | null;
+  paper_id: string | null;
+  concept: string | null;
+  difficulty: number;
+};
+
+export type Flashcard = {
+  id: string;
+  front: string;
+  back: string;
+  paper_id: string | null;
+  concept: string | null;
+  kind: string;
+};
+
+export type PaperDetail = {
+  paper: Paper;
+  extraction: Record<string, any> | null;
+  pdf: { status: string; bytes: number | null; error: string | null; url: string | null; storage_path: string | null };
+  sections: { heading: string | null; content: string }[];
+  chunks: {
+    id: string;
+    section_id: string | null;
+    section: string | null;
+    page_start: number | null;
+    page_end: number | null;
+    ordinal: number;
+    char_start: number | null;
+    char_end: number | null;
+    content: string;
+  }[];
+};

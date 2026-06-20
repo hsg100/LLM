@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html, body {
+  background: #fafaf7;
+  color: #0c0c0e;
+}
+
+a { color: #1f3a8a; }
+a:hover { text-decoration: underline; }
+
+.prose-fieldmap h1 { @apply text-2xl font-semibold mt-6 mb-2; }
+.prose-fieldmap h2 { @apply text-lg font-semibold mt-5 mb-1; }
+.prose-fieldmap p  { @apply my-2 leading-relaxed; }
+.prose-fieldmap ul { @apply list-disc pl-6 my-2; }
+.prose-fieldmap ol { @apply list-decimal pl-6 my-2; }
