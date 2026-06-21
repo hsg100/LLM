@@ -66,6 +66,7 @@ from app.schemas import (
 )
 from app.services.concepts import build_concept_map, concept_slug, concept_to_dict
 from app.services.pdf_storage import resolve_pdf_storage_path
+from app.users import DEFAULT_USER_ID
 from app.workers.landscape_job import run_landscape_job
 from app.workers.queue import get_queue
 
@@ -80,6 +81,7 @@ router = APIRouter()
 def create_landscape(body: LandscapeCreate, s: Session = Depends(get_session)) -> dict[str, str]:
     landscape = Landscape(
         topic=body.topic,
+        user_id=DEFAULT_USER_ID,
         settings={
             "max_papers": body.max_papers or get_settings().max_papers_per_landscape,
             "sources": body.sources,
@@ -105,7 +107,11 @@ def create_landscape(body: LandscapeCreate, s: Session = Depends(get_session)) -
 
 @router.get("/landscapes", response_model=list[LandscapeOut])
 def list_landscapes(s: Session = Depends(get_session)) -> list[LandscapeOut]:
-    rows = s.exec(select(Landscape).order_by(Landscape.created_at.desc())).all()
+    rows = s.exec(
+        select(Landscape)
+        .where(Landscape.user_id == DEFAULT_USER_ID)
+        .order_by(Landscape.created_at.desc())
+    ).all()
     return [LandscapeOut.model_validate(r, from_attributes=True) for r in rows]
 
 

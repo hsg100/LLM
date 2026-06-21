@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.config import get_settings
-from app.db import init_db
+from app.db import init_db, session_scope
 from app.services.embeddings import embedding_metadata, get_embedding_provider, validate_embedding_configuration
+from app.users import ensure_default_user
 from app.workers.queue import wait_for_redis
 
 
@@ -18,7 +20,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger("fieldmap.api")
 
-app = FastAPI(title="FieldMap API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    s = get_settings()
+    logger.info(
+        "api startup env=%s llm_provider=%s embedding_provider=%s",
+        s.env,
+        s.llm_provider,
+        s.embedding_provider,
+    )
+    validate_embedding_configuration(s)
+    try:
+        wait_for_redis()
+    except Exception as e:  # noqa: BLE001 — keep API up so /health works for debugging
+        logger.error("api startup: redis not reachable: %s", e)
+    try:
+        init_db()
+        with session_scope() as session:
+            ensure_default_user(session)
+    except Exception as e:  # noqa: BLE001
+        logger.error("api startup: init_db failed: %s", e)
+    yield
+
+
+app = FastAPI(title="FieldMap API", version="0.1.0", lifespan=lifespan)
 
 settings = get_settings()
 allowed_origins = [
@@ -39,29 +65,18 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def on_startup() -> None:
-    s = get_settings()
-    logger.info("api startup env=%s llm_provider=%s embedding_provider=%s", s.env, s.llm_provider, s.embedding_provider)
-    validate_embedding_configuration(s)
-    try:
-        wait_for_redis()
-    except Exception as e:  # noqa: BLE001 — keep API up so /health works for debugging
-        logger.error("api startup: redis not reachable: %s", e)
-    try:
-        init_db()
-    except Exception as e:  # noqa: BLE001
-        logger.error("api startup: init_db failed: %s", e)
-
-
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.get("/ready")
-def ready() -> dict[str, object]:
-    """Deeper readiness check: DB + Redis + settings snapshot."""
+def ready(response: Response) -> dict[str, object]:
+    """Deeper readiness check: DB + Redis + settings snapshot.
+
+    Returns HTTP 503 when a hard dependency (DB or Redis) is unavailable, so
+    this can be used directly as a deployment readiness probe.
+    """
     s = get_settings()
     out: dict[str, object] = {
         "env": s.env,
@@ -91,6 +106,8 @@ def ready() -> dict[str, object]:
         out["redis"] = "ok"
     except Exception as e:  # noqa: BLE001
         out["redis"] = f"error: {type(e).__name__}: {str(e)[:160]}"
+    if out.get("db") != "ok" or out.get("redis") != "ok":
+        response.status_code = 503
     return out
 
 
