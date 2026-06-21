@@ -13,9 +13,9 @@ from datetime import datetime
 from typing import Any, Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, DateTime, Float, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import Column, DateTime, Float, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Field, Relationship, SQLModel
+from sqlmodel import Field, SQLModel
 
 from app.config import get_settings
 

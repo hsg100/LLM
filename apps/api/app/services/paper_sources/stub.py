@@ -70,9 +70,9 @@ def _author_pool(topic: str) -> list[str]:
     h = hashlib.blake2b(topic.encode(), digest_size=16).digest()
     out: list[str] = []
     for i in range(3):
-        f = first_names[h[i] % len(first_names)]
-        l = last_names[h[i + 3] % len(last_names)]
-        out.append(f"{f} {l}")
+        first = first_names[h[i] % len(first_names)]
+        last = last_names[h[i + 3] % len(last_names)]
+        out.append(f"{first} {last}")
     return out
 
 

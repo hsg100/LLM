@@ -271,7 +271,6 @@ async def _run(job_id: str) -> None:
                 },
             )
             return
-        landscape_paper_meta = _load_landscape_paper_meta(job_id, paper_ids)
 
         # ----- 4 + 5. Download + parse PDFs -----
         has_pdf_candidates = any(r.candidate.pdf_url for r in ranked)
@@ -457,24 +456,6 @@ def _persist_papers_and_links(job_id: str, ranked) -> dict[str, str]:  # type: i
                 link.rationale = r.rationale
                 s.add(link)
             out[cand.external_id] = paper.id
-    return out
-
-
-def _load_landscape_paper_meta(job_id: str, paper_ids: dict[str, str]) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
-    with session_scope() as s:
-        for pid in paper_ids.values():
-            p = s.get(Paper, pid)
-            if p:
-                out[pid] = {
-                    "id": p.id,
-                    "title": p.title,
-                    "year": p.year,
-                    "pdf_url": p.pdf_url,
-                    "abstract": p.abstract,
-                    "authors": p.authors,
-                    "venue": p.venue,
-                }
     return out
 
 
@@ -712,7 +693,6 @@ def _chunk_text_with_ranges(text: str, target_chars: int, overlap: int) -> list[
     text = text or ""
     out: list[tuple[str, int, int]] = []
     pos = 0
-    step = max(1, target_chars - overlap)
     while pos < len(text):
         end = min(len(text), pos + target_chars)
         if end < len(text):
