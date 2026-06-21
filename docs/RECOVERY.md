@@ -817,6 +817,16 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 ### Sprint 1 — Job orchestration & progress *(closes §2.2, §2.3, §3.11)*
 
 > **Goal:** Reliable, race-free, push-based pipeline progress.
+>
+> **Status: implemented & verified.** Append-only `job_events` table (DB-assigned
+> monotonic `seq`); worker does single-row inserts + atomic `GREATEST` progress
+> (race + O(n²) gone); Redis pub/sub push SSE with DB-poll fallback, stall
+> watchdog, and lifetime cap; cooperative cancellation (`CANCELLED` stage,
+> `POST /jobs/{id}/cancel`, jobs-page Cancel button); N+1 batched in the five
+> listed call sites. Also froze the Alembic baseline as explicit DDL so
+> incremental migrations are now real (drift-checked: baseline == models).
+> Verified on pgvector Postgres 16 (incl. a 25-way concurrent-append test) +
+> CI green; frontend builds.
 
 - **`job_events` table** (append-only, one row per event); worker emits
   single-row inserts — kills the JSONB read-modify-write race and O(n²) rewrite.
