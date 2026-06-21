@@ -789,6 +789,16 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 ### Sprint 0 — Foundations & cleanup *(closes §2.1, §2.5, §2.6, parts of §3.14, §4.1–4.3)*
 
 > **Goal:** A clean, contract-driven base so later sprints aren't built on sand.
+>
+> **Status: implemented (pending CI/dev verification).** Done: Alembic +
+> baseline/seed migrations (`create_all` + `_ensure_*` removed); dead code
+> deleted; canonical `app/pipeline.py` (+ `lib/pipeline.ts`) stage/status
+> vocabulary; single-user `user_id` plumbing; lifespan startup; `/ready` as a
+> 503-capable readiness probe. **Deferred to Sprint 4:** enforcing "LLM must
+> echo `paper_id`" (the prompt + validation change belongs with the synthesis
+> rework, where stable ids are also listed). Tests/migrations were
+> compile-checked only — the suite and a live `alembic upgrade` must run in CI /
+> a DB-backed env (deps weren't installable in the authoring sandbox).
 
 - **Alembic** with a single baseline migration generated from current models
   (recreate-from-scratch). Remove `_ensure_chunk_metadata_columns`,
