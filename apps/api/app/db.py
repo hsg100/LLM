@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, create_engine
 
 from app.config import get_settings
 
@@ -15,6 +16,9 @@ from app.config import get_settings
 logger = logging.getLogger("fieldmap.db")
 
 settings = get_settings()
+
+# apps/api — the directory that holds alembic.ini and migrations/.
+_API_ROOT = Path(__file__).resolve().parents[1]
 
 engine = create_engine(
     settings.database_url,
@@ -30,49 +34,86 @@ engine = create_engine(
 )
 
 
-def init_db() -> None:
-    """Wait for Postgres, enable pgvector, then create tables.
+def _wait_for_db() -> None:
+    """Block until Postgres answers ``SELECT 1`` or attempts are exhausted.
 
-    Both the api and the worker call this on startup. We retry on
-    ``OperationalError`` to handle the common docker-compose race where
-    the api/worker boots faster than postgres is ready, even with a
-    healthcheck.
+    Handles the common docker-compose race where the api/worker boots before
+    Postgres is accepting connections, even with a healthcheck.
     """
     attempts = max(1, settings.db_connect_attempts)
     backoff = max(0.1, settings.db_connect_backoff_seconds)
     last_exc: Exception | None = None
-
     for i in range(attempts):
         try:
-            from app.services.embeddings import validate_embedding_configuration
-
-            validate_embedding_configuration(settings)
-            with engine.begin() as conn:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            # Import models so SQLModel registers them.
-            from app import models  # noqa: F401
-
-            SQLModel.metadata.create_all(engine)
-            _ensure_chunk_metadata_columns()
-            _ensure_concept_columns()
-            _validate_vector_columns()
-            logger.info("init_db: connected and schema ready")
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
             return
         except OperationalError as e:
             last_exc = e
             logger.warning(
-                "init_db: postgres not ready (attempt %d/%d): %s",
+                "db: postgres not ready (attempt %d/%d): %s",
                 i + 1,
                 attempts,
                 _short(str(e)),
             )
             time.sleep(backoff)
-        except Exception as e:
-            last_exc = e
-            logger.exception("init_db: unexpected failure (attempt %d/%d)", i + 1, attempts)
-            time.sleep(backoff)
     assert last_exc is not None
     raise last_exc
+
+
+def run_migrations() -> None:
+    """Apply Alembic migrations up to head. Owned by the API process."""
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(_API_ROOT / "alembic.ini"))
+    # Resolve paths absolutely so this works regardless of CWD (the app may be
+    # launched from anywhere). env.py reads the DB URL from settings itself.
+    cfg.set_main_option("script_location", str(_API_ROOT / "migrations"))
+    command.upgrade(cfg, "head")
+
+
+def init_db() -> None:
+    """API startup: wait for Postgres, validate config, migrate, then guard.
+
+    Replaces the old ``create_all`` + ad-hoc ``ALTER TABLE`` patches. Schema is
+    now owned entirely by Alembic (see migrations/). Only the API runs
+    migrations; the worker calls :func:`wait_for_schema` to avoid two processes
+    racing the first-time upgrade.
+    """
+    from app.services.embeddings import validate_embedding_configuration
+
+    validate_embedding_configuration(settings)
+    _wait_for_db()
+    run_migrations()
+    _validate_vector_columns()
+    logger.info("init_db: connected, migrated, and schema ready")
+
+
+def wait_for_schema(core_table: str = "landscapes") -> None:
+    """Worker startup: wait for Postgres AND for the API's migrations to land.
+
+    Polls for a core table rather than running migrations, so the worker never
+    competes with the API to apply the first-time schema.
+    """
+    _wait_for_db()
+    attempts = max(1, settings.db_connect_attempts)
+    backoff = max(0.1, settings.db_connect_backoff_seconds)
+    for i in range(attempts):
+        with engine.connect() as conn:
+            exists = conn.execute(
+                text("SELECT to_regclass(:name)"), {"name": f"public.{core_table}"}
+            ).scalar()
+        if exists is not None:
+            logger.info("wait_for_schema: schema present")
+            return
+        logger.warning(
+            "wait_for_schema: %s not present yet (attempt %d/%d)", core_table, i + 1, attempts
+        )
+        time.sleep(backoff)
+    raise RuntimeError(
+        f"wait_for_schema: table {core_table!r} never appeared; has the API run migrations?"
+    )
 
 
 @contextmanager
@@ -99,7 +140,8 @@ def _short(msg: str, n: int = 200) -> str:
 
 
 def _validate_vector_columns() -> None:
-    """Existing pgvector columns are fixed-width and are not resized by create_all."""
+    """Existing pgvector columns are fixed-width and are not resized by migration
+    autogenerate; guard against a config/schema dimension mismatch."""
     expected = f"vector({settings.embedding_dim})"
     with engine.connect() as conn:
         rows = conn.execute(
@@ -125,50 +167,6 @@ def _validate_vector_columns() -> None:
             raise RuntimeError(
                 f"{row['table_name']}.{row['column_name']} is {actual}, "
                 f"but EMBEDDING_DIM={settings.embedding_dim} expects {expected}. "
-                "pgvector columns are fixed-width; migrate or recreate these columns before changing dimensions."
+                "pgvector columns are fixed-width; add a migration to resize before "
+                "changing dimensions."
             )
-
-
-def _ensure_chunk_metadata_columns() -> None:
-    """create_all does not add columns to existing local alpha DBs."""
-    statements = [
-        "ALTER TABLE IF EXISTS paper_sections ADD COLUMN IF NOT EXISTS page_start INTEGER",
-        "ALTER TABLE IF EXISTS paper_sections ADD COLUMN IF NOT EXISTS page_end INTEGER",
-        "ALTER TABLE IF EXISTS chunks ADD COLUMN IF NOT EXISTS section_heading TEXT",
-        "ALTER TABLE IF EXISTS chunks ADD COLUMN IF NOT EXISTS page_start INTEGER",
-        "ALTER TABLE IF EXISTS chunks ADD COLUMN IF NOT EXISTS page_end INTEGER",
-        "ALTER TABLE IF EXISTS chunks ADD COLUMN IF NOT EXISTS char_start INTEGER",
-        "ALTER TABLE IF EXISTS chunks ADD COLUMN IF NOT EXISTS char_end INTEGER",
-    ]
-    with engine.begin() as conn:
-        for stmt in statements:
-            conn.execute(text(stmt))
-
-
-def _ensure_concept_columns() -> None:
-    """Backfill richer concept columns for alpha DBs created with the old table."""
-    statements = [
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS term TEXT",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS slug VARCHAR",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS aliases JSONB DEFAULT '[]'::jsonb",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS short_definition TEXT",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS long_definition TEXT",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS why_it_matters TEXT",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS related_terms JSONB DEFAULT '[]'::jsonb",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS paper_ids JSONB DEFAULT '[]'::jsonb",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS source_grounding JSONB DEFAULT '[]'::jsonb",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS confidence FLOAT DEFAULT 0.5",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS importance FLOAT DEFAULT 0.5",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
-        "ALTER TABLE IF EXISTS concepts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP",
-        "UPDATE concepts SET term = COALESCE(term, name)",
-        "UPDATE concepts SET slug = COALESCE(slug, regexp_replace(lower(name), '[^a-z0-9]+', '-', 'g'))",
-        "UPDATE concepts SET short_definition = COALESCE(short_definition, definition)",
-        "UPDATE concepts SET long_definition = COALESCE(long_definition, definition)",
-        "UPDATE concepts SET created_at = COALESCE(created_at, NOW())",
-        "UPDATE concepts SET updated_at = COALESCE(updated_at, NOW())",
-        "CREATE INDEX IF NOT EXISTS ix_concepts_slug ON concepts (slug)",
-    ]
-    with engine.begin() as conn:
-        for stmt in statements:
-            conn.execute(text(stmt))
