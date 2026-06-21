@@ -26,6 +26,7 @@ from sqlmodel import select
 
 from app.config import get_settings
 from app.db import session_scope
+from app.pipeline import JobStage, LandscapeStatus, PIPELINE_STAGES
 from app.models import (
     Chunk,
     Cluster,
@@ -67,19 +68,8 @@ from app.services.synthesis import synthesise
 from app.services.vectors import has_embedding, to_list
 
 
-STAGES = [
-    "queued",
-    "searching",
-    "deduplicating",
-    "embedding_ranking",
-    "downloading_pdfs",
-    "parsing_pdfs",
-    "extracting",
-    "synthesising",
-    "concepts",
-    "active_recall",
-    "done",
-]
+# Canonical ordered stages live in app.pipeline (shared with the API + frontend).
+STAGES = PIPELINE_STAGES
 
 
 def run_landscape_job(job_id: str) -> None:
@@ -103,7 +93,7 @@ async def _run(job_id: str) -> None:
         max_papers = int(landscape.settings.get("max_papers") or settings.max_papers_per_landscape)
         sources = landscape.settings.get("sources") or ["arxiv"]
         parse_pdfs_flag = bool(landscape.settings.get("parse_pdfs", True))
-        landscape.status = "running"
+        landscape.status = LandscapeStatus.RUNNING.value
         s.add(landscape)
         job.started_at = datetime.utcnow()
         s.add(job)
@@ -389,8 +379,8 @@ async def _run(job_id: str) -> None:
         )
         _persist_quiz_and_flashcards(job_id, quizzes, flashcards)
 
-        _set_stage(job_id, "done", 1.0, "Pipeline complete")
-        _finalize(job_id, status="ready")
+        _set_stage(job_id, JobStage.DONE.value, 1.0, "Pipeline complete")
+        _finalize(job_id, status=LandscapeStatus.READY.value)
 
     except Exception as e:  # noqa: BLE001
         _set_error(job_id, f"pipeline error: {e!s}")
@@ -1150,15 +1140,15 @@ def _set_error(job_id: str, msg: str, meta: Optional[dict[str, Any]] = None) -> 
         if job is None:
             return
         job.error = msg
-        job.stage = "failed"
+        job.stage = JobStage.FAILED.value
         job.finished_at = datetime.utcnow()
         events = list(job.events or [])
-        events.append(_event("failed", msg, job.progress, meta))
+        events.append(_event(JobStage.FAILED.value, msg, job.progress, meta))
         job.events = events
         s.add(job)
         landscape = s.get(Landscape, job.landscape_id)
         if landscape:
-            landscape.status = "failed"
+            landscape.status = LandscapeStatus.FAILED.value
             s.add(landscape)
 
 

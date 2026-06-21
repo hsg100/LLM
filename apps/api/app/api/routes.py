@@ -20,6 +20,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.config import get_settings
 from app.db import get_session, session_scope
+from app.pipeline import JobStage, LandscapeStatus, TERMINAL_STAGES
 from app.exporters.obsidian_git import (
     get_configured_repo_root,
     make_repo_root,
@@ -85,12 +86,12 @@ def create_landscape(body: LandscapeCreate, s: Session = Depends(get_session)) -
             "parse_pdfs": body.parse_pdfs,
             **(body.settings or {}),
         },
-        status="queued",
+        status=LandscapeStatus.QUEUED.value,
     )
     s.add(landscape)
     s.flush()
 
-    job = SearchJob(landscape_id=landscape.id, stage="queued", progress=0.0)
+    job = SearchJob(landscape_id=landscape.id, stage=JobStage.QUEUED.value, progress=0.0)
     s.add(job)
     s.flush()
 
@@ -374,12 +375,12 @@ async def job_events(job_id: str) -> EventSourceResponse:
                         payload = _normalise_job_event(ev)
                         yield {"event": "progress", "id": str(last_seen), "data": json.dumps(payload)}
                         last_seen += 1
-                    if job.stage == "done" or job.stage == "failed":
+                    if job.stage in TERMINAL_STAGES:
                         payload = {
                             "ts": (job.finished_at or datetime.utcnow()).isoformat() + "Z",
                             "stage": job.stage,
                             "progress": job.progress,
-                            "message": "Pipeline complete" if job.stage == "done" else (job.error or "Pipeline failed"),
+                            "message": "Pipeline complete" if job.stage == JobStage.DONE.value else (job.error or "Pipeline failed"),
                             "meta": {"job_id": job_id, "landscape_id": job.landscape_id},
                         }
                         yield {"event": "complete", "id": "final", "data": json.dumps(payload)}

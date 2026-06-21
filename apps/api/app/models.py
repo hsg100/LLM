@@ -54,7 +54,8 @@ class Landscape(SQLModel, table=True):
     topic: str = Field(sa_column=Column(Text, nullable=False))
     settings: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}"))
     synthesis: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}"))
-    status: str = Field(default="pending", index=True)
+    # See app.pipeline.LandscapeStatus for the canonical values.
+    status: str = Field(default="queued", index=True)
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(
         sa_column=Column(DateTime, default=_now, onupdate=_now, nullable=False)

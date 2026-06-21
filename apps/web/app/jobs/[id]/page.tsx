@@ -4,25 +4,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { apiGet, apiUrl, Job, JobEvent } from "../../../lib/api";
+import { STAGE_DEFS, STAGE_INDEX, isTerminalStage } from "../../../lib/pipeline";
 
 type StageStatus = "done" | "active" | "pending";
 type EventLevel = "ok" | "warn" | "info" | "err";
-
-const STAGE_DEFS: { key: string; label: string }[] = [
-  { key: "queued", label: "Queued" },
-  { key: "searching", label: "Searching arXiv" },
-  { key: "deduplicating", label: "Deduplicating" },
-  { key: "embedding_ranking", label: "Embedding & ranking" },
-  { key: "downloading_pdfs", label: "Downloading PDFs" },
-  { key: "parsing_pdfs", label: "Parsing PDFs" },
-  { key: "extracting", label: "Extracting notes" },
-  { key: "synthesising", label: "Synthesising landscape" },
-  { key: "concepts", label: "Generating concepts" },
-  { key: "active_recall", label: "Quiz & flashcards" },
-];
-const STAGE_INDEX: Record<string, number> = Object.fromEntries(
-  STAGE_DEFS.map((s, i) => [s.key, i])
-);
 
 function fmtTime(iso: string): string {
   try {
@@ -168,7 +153,7 @@ export default function JobPage({ params }: { params: { id: string } }) {
         if (stopped) return;
         setJob(j);
         setPollErr(null);
-        if (j.stage === "done" || j.stage === "failed") return;
+        if (isTerminalStage(j.stage)) return;
         setTimeout(tick, 1500);
       } catch (e: any) {
         if (stopped) return;
@@ -234,7 +219,7 @@ export default function JobPage({ params }: { params: { id: string } }) {
     const start = new Date(iso.endsWith("Z") ? iso : iso + "Z").getTime();
     const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)));
     tick();
-    if (job.stage === "done" || job.stage === "failed") return;
+    if (isTerminalStage(job.stage)) return;
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [job?.started_at, job?.stage]);
