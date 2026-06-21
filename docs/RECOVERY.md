@@ -207,10 +207,12 @@ embedding provider as the default cost-free path; stub demoted to an explicit
 "demo mode," not the silent default.
 
 **Actions.**
-- Default LLM provider → `anthropic`; fast/strong models →
-  `claude-haiku-4-5-20251001` (fast) and `claude-opus-4-8` (strong), with
-  `claude-sonnet-4-6` as a balanced middle. *Verify exact model IDs / pricing
-  against the Claude API reference at implementation time.*
+- **Decided:** default LLM provider → `deepseek` (the `DeepSeekLLM` provider
+  already exists, so this is config, not new code). Tiering: **DeepSeek V4 Pro**
+  for hard reasoning (extraction, synthesis, relationships, concept
+  definitions); a cheaper DeepSeek model for simpler generation (quiz/flashcards,
+  short rationales). *Confirm exact model IDs (e.g. `deepseek-chat` /
+  `deepseek-reasoner` / the V4 Pro identifier) and pricing at build time.*
 - Add a `local`/`sentence-transformers` embedding provider (bge-small = 384-d,
   MiniLM = 384-d). Make it the default; set `EMBEDDING_DIM` accordingly. This
   interacts with §2.1 (pgvector column width is fixed → dimension change is a
@@ -758,24 +760,165 @@ A pragmatic order (we'll adjust as we work through sections):
 
 ---
 
-## 6. Open decisions (consolidated)
+## 6. Resolved decisions
 
-These are the questions whose answers shape the build. We'll resolve them as we
-go feature by feature:
+All shaping decisions are locked. The sprint plan (§7) is built on these.
 
-1. **Auth posture** (§2.6): single-user now, or multi-user from the start?
-2. **Default providers** (§2.4): confirm Claude default + model tiers; local
-   embeddings as default?
-3. **Event store** (§2.2): relational `job_events` table vs. Redis Streams.
-4. **Sources for recovery** (§3.2): Semantic Scholar + arXiv + user-PDF first?
-5. **"Why read this" owner** (§3.3): ranking vs. synthesis.
-6. **Concept annotation** (§3.8/§2.5): server-rendered vs. client-rendered.
-7. **Review scheduler** (§3.9): FSRS vs. SM-2 first.
-8. **Degraded-synthesis UX** (§3.6): show labelled skeleton vs. block as
-   incomplete.
-9. **Migrations** (§2.1): Alembic, and can the alpha DB be recreated?
+| # | Decision | Resolution | Affects |
+|---|----------|-----------|---------|
+| 1 | **Auth posture** | **Single-user now.** No login; plumb `user_id` through models/queries so multi-user is additive later. | §2.6 |
+| 2 | **LLM provider** | **DeepSeek.** V4 Pro for hard tasks (extraction, synthesis, relationships, concepts); cheaper DeepSeek model for simpler ones (quiz/flashcards). Confirm exact model IDs at build. | §2.4, §3.5/3.6/3.7/3.8/3.9 |
+| 3 | **Embeddings** | **Local default + optional API.** Add sentence-transformers (bge-small / MiniLM, 384-d) as the cost-free default; keep OpenAI embeddings optional. | §2.4, §2.1 |
+| 4 | **Event store** | **`job_events` table + Redis pub/sub.** Append-only rows; pub/sub for live SSE push (DB poll as fallback). | §2.2, §3.11 |
+| 5 | **Sources** | **Semantic Scholar + arXiv + user-PDF.** OpenAlex/Crossref/GitHub later. | §3.2, §3.3 |
+| 6 | **"Why read this" owner** | **Synthesis stage** (cross-paper context). Ranking owns only initial ordering. | §3.3, §3.6 |
+| 7 | **Concept annotation** | **Server-rendered + parity test.** Backend returns annotated segments; client consumes; shared fixture guards parity. | §3.8, §2.5 |
+| 8 | **Review scheduler** | **Attempt-recording first, then FSRS.** Ship `POST review` + recording + basic scheduler, then layer FSRS. | §3.9 |
+| 9 | **Degraded synthesis UX** | **Labelled skeleton** — show deterministic structure clearly marked "auto-generated outline / synthesis unavailable." | §3.6 |
+| 10 | **Migrations** | **Alembic.** Up/down migrations; remove `create_all` + ad-hoc `ALTER`s from the startup hot path. | §2.1 |
+| 11 | **Alpha DB** | **Recreate from scratch.** No data to preserve; baseline a clean initial migration and drop the legacy backfill patches. | §2.1 |
 
 ---
 
-*End of draft. Next: we pick a feature (or Phase 0) and turn its section into a
-concrete, buildable plan.*
+## 7. Sprint plan
+
+Eight sprints, each independently shippable and verifiable. Dependencies are
+strict left-to-right where noted; within a sprint, items can parallelize.
+Each sprint lists **Goal → Scope → Acceptance** and the spec sections it closes.
+
+### Sprint 0 — Foundations & cleanup *(closes §2.1, §2.5, §2.6, parts of §3.14, §4.1–4.3)*
+
+> **Goal:** A clean, contract-driven base so later sprints aren't built on sand.
+
+- **Alembic** with a single baseline migration generated from current models
+  (recreate-from-scratch). Remove `_ensure_chunk_metadata_columns`,
+  `_ensure_concept_columns`, and `create_all` from `init_db`.
+- **Remove dead code:** `PhoneFrame.tsx`, `useViewport.useIsMobile`,
+  `extraction._join_sections`, the unused parser `chunks` field.
+- **Shared contracts:** one canonical **stage enum** + **`landscape.status`
+  enum**, exported to the frontend; adopt **stable `paper_id`** as the only
+  cross-stage reference (LLM must echo ids).
+- **Single-user plumbing:** thread `user_id` through models/queries (no login).
+- **Startup hygiene:** replace deprecated `@app.on_event` with lifespan; deploy
+  readiness probe → `/ready`.
+- **Acceptance:** fresh DB boots purely via Alembic; no dead code remains;
+  frontend imports the shared stage/status constants; `paper_id` used everywhere.
+
+### Sprint 1 — Job orchestration & progress *(closes §2.2, §2.3, §3.11)*
+
+> **Goal:** Reliable, race-free, push-based pipeline progress.
+
+- **`job_events` table** (append-only, one row per event); worker emits
+  single-row inserts — kills the JSONB read-modify-write race and O(n²) rewrite.
+- **Redis pub/sub**; SSE subscribes (slow DB poll as fallback) with heartbeat +
+  **stall watchdog**.
+- **Cancel endpoint**; unify terminal-state vocabulary (`done`/`failed`).
+- **Fix N+1** in `get_landscape_papers`, `get_landscape_graph`,
+  `_build_export_plan`, `_load_landscape_bundle`, `_persist_synthesis`.
+- **Acceptance:** concurrent download/parse/extract events never lost; progress
+  monotonic; UI updates via push; cancel works; no per-row paper `get` loops.
+
+### Sprint 2 — Providers & runtime config *(closes §2.4, §3.13)*
+
+> **Goal:** Out-of-the-box real pipeline on DeepSeek + local embeddings.
+
+- **DeepSeek default** with the V4-Pro/cheap tier mapping; demote `StubLLM` to
+  explicit `ENV=development` (drop silent prompt-sniffing default).
+- **Local embeddings provider** (sentence-transformers, 384-d) as default; set
+  `EMBEDDING_DIM=384`; Alembic migration to resize pgvector columns + reindex;
+  keep OpenAI embeddings optional.
+- **DB-backed runtime settings** for the editable subset (provider/model,
+  max_papers, sources, obsidian repo path + auto-push); make `PATCH /settings`
+  real and wire the settings page form. Secrets stay env-only.
+- **Acceptance:** clean install runs a real landscape with only a DeepSeek key
+  configured; editable settings persist and take effect without redeploy.
+
+### Sprint 3 — Discovery & ranking quality *(closes §3.2, §3.3)*
+
+> **Goal:** Multi-source discovery with real signals and quality-aware ranking.
+
+- **`SemanticScholarSource`** (citations / influential-citation count / OA PDF)
+  + **user-PDF ingestion** (upload → store → parse → candidate); cross-source
+  **dedupe** by DOI > arXiv id > normalized title; feed `citation_count` into
+  `Paper`.
+- **Ranking:** quality-aware categories (absolute + relative), remove dead line
+  `ranking.py:95`, and establish a **single owner** for `LandscapePaper.category`
+  (stop ranking/extraction/synthesis silently overwriting each other).
+- **Acceptance:** results merge across sources with citations populated;
+  categories reflect absolute quality; exactly one stage writes `category`.
+
+### Sprint 4 — Synthesis, field structure & relationships *(closes §3.6, §3.7, parts of §3.3)*
+
+> **Goal:** Topic-specific maps and genuinely pedagogical reasoning.
+
+- **Topic-specific field-structure DAG** (LLM-authored; deterministic spine only
+  as a **labelled** fallback per decision #9).
+- **"Why read this / why skip"** authored in **synthesis**, grounded in
+  extractions, replacing the metrics-string rationale; stable `paper_id`
+  references end-to-end.
+- **LLM-authored, extraction-grounded relationship graph** (typed edges +
+  rationale); heuristics demoted to labelled fallback; **seed from Semantic
+  Scholar citation edges**.
+- **Acceptance:** two different topics yield structurally different DAGs; reading
+  path shows real reasons; relationship edges are meaningful (not adjacency).
+
+### Sprint 5 — Grounding depth & extraction correctness *(closes §3.4, §3.5)*
+
+> **Goal:** Trustworthy, page-level source grounding.
+
+- **Page-aware PDF parsing** → populate `page_start/page_end` on sections/chunks;
+  thread pages through grounding → paper UI → export.
+- **Consolidate chunking** to one implementation.
+- **Rewrite the extraction refresh predicate** (`_extraction_needs_refresh` /
+  `_is_low_signal_extraction`) with explicit cases + tests; switching
+  stub→real provider invalidates degraded extractions.
+- **Acceptance:** grounding cites page + chunk; configuring a real provider
+  re-extracts previously degraded papers.
+
+### Sprint 6 — Active recall & review loop *(closes §3.9, mobile parts of §3.12)*
+
+> **Goal:** The differentiator — prove understanding, not just consume.
+
+- **`POST review`** → record `ReviewAttempt`; basic scheduler → **FSRS**;
+  **review-queue** + **weak-area** endpoints.
+- **Richer question types:** explain-before-reveal + paper-comparison.
+- **Mobile review screens** (responsive) against the new API.
+- **Acceptance:** answering records attempts; daily queue + weak areas surface;
+  FSRS schedules; mobile review usable.
+
+### Sprint 7 — Annotation, export UX & frontend polish *(closes §3.8, §3.10, rest of §3.12)*
+
+> **Goal:** Coherence and finish across the loop.
+
+- **Server-rendered concept annotation** + parity test; client consumes the
+  segment contract.
+- **Export UX:** prominent preview diffs, one-click init+commit, opt-in
+  auto-export-on-complete.
+- **Frontend decomposition:** break up the giant pages (landscape 1014 / paper
+  988 / jobs 738) into components + data hooks; adopt a **graph viz library**
+  for map / concept-map / relationship views.
+- **Acceptance:** one annotation source of truth; export is a discoverable step
+  in the loop; pages componentized; interactive graphs render.
+
+---
+
+### Dependency summary
+
+```
+Sprint 0 ──► Sprint 1 ──► Sprint 2 ──► Sprint 3 ──► Sprint 4
+                 │                          │           │
+                 └────────────► Sprint 5 ◄──┘           │
+                                                Sprint 6 (after 2; 4 helps)
+                                                Sprint 7 (after 4, 6)
+```
+
+- **0 → everything** (contracts, migrations, identity).
+- **1** before any sprint relying on clean progress/queries.
+- **2** before 3/4/5/6 (real provider + embeddings drive output quality).
+- **5** needs page data from parsing; independent of 3/4 otherwise.
+- **7** is the finishing pass once content (4) and review (6) exist.
+
+---
+
+*End of draft. Pick a sprint (Sprint 0 is the recommended start) and I'll turn
+its section into a concrete, buildable task list.*
