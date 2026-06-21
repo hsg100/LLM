@@ -239,6 +239,10 @@ class StubLLM(LLMProvider):
 
 
 # ---------------------------------------------------------------------------
+class LLMConfigError(RuntimeError):
+    """Raised when the configured LLM provider can't be built (no key) outside dev."""
+
+
 def get_llm(strong: bool = False) -> LLMProvider:
     s = get_settings()
     provider = s.llm_provider.lower()
@@ -249,7 +253,17 @@ def get_llm(strong: bool = False) -> LLMProvider:
         return DeepSeekLLM(s.deepseek_api_key, model)
     if provider == "anthropic" and s.anthropic_api_key:
         return AnthropicLLM(s.anthropic_api_key, model)
-    return StubLLM()
+
+    # No usable key for the configured provider. The deterministic StubLLM is a
+    # development convenience only — never silently substitute it in production.
+    reason = f"LLM provider {provider!r} has no API key configured"
+    if s.is_development:
+        logger.warning("%s; falling back to StubLLM (development only)", reason)
+        return StubLLM()
+    raise LLMConfigError(
+        f"{reason}. Set the provider's API key, choose a configured provider, "
+        "or run with ENV=development to use the offline stub."
+    )
 
 
 # ---------------------------------------------------------------------------

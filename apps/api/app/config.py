@@ -17,9 +17,12 @@ class Settings(BaseSettings):
     semantic_scholar_api_key: str = ""
     openalex_email: str = ""
 
-    llm_provider: str = "openai"
-    llm_model_fast: str = "gpt-4o-mini"
-    llm_model_strong: str = "gpt-4o"
+    llm_provider: str = "deepseek"
+    # DeepSeek API tiers (override per account/needs in .env):
+    #   strong → reasoning model for extraction/synthesis/relationships/concepts
+    #   fast   → cheaper chat model for quiz/flashcards + short generations
+    llm_model_fast: str = "deepseek-chat"
+    llm_model_strong: str = "deepseek-reasoner"
     embedding_provider: str = "stub"
     embedding_model: str = "stub"
     embedding_dim: int = 1536
