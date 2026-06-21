@@ -841,6 +841,18 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 ### Sprint 2 — Providers & runtime config *(closes §2.4, §3.13)*
 
 > **Goal:** Out-of-the-box real pipeline on DeepSeek + local embeddings.
+>
+> **Status: implemented & verified.** Default LLM provider is DeepSeek
+> (reasoner/chat tiers, env-overridable); `StubLLM` is gated to
+> `ENV=development` and raises otherwise. Local `fastembed` embeddings
+> (bge-small, 384-d) are the cost-free default with migration 0003 resizing the
+> pgvector columns. DB-backed runtime settings (migration 0004) make LLM
+> provider/models, max-papers, and Obsidian auto-push editable via a real
+> `PATCH /settings` + settings-page form, taking effect without redeploy.
+> Verified on pgvector Postgres 16 (migrations drift-clean) + next build green.
+> **Deferred:** exact DeepSeek "V4 Pro" model id (env-overridable; using
+> `deepseek-reasoner`/`deepseek-chat` defaults — confirm against the account's
+> catalog); Obsidian repo path + default sources remain env-only.
 
 - **DeepSeek default** with the V4-Pro/cheap tier mapping; demote `StubLLM` to
   explicit `ENV=development` (drop silent prompt-sniffing default).
