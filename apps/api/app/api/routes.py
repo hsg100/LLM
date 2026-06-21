@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
 from app.db import get_session, session_scope
@@ -33,6 +35,7 @@ from app.models import (
     Concept,
     Extraction,
     Flashcard,
+    JobEvent,
     Landscape,
     LandscapePaper,
     ObsidianExport,
@@ -67,7 +70,7 @@ from app.schemas import (
 from app.services.concepts import build_concept_map, concept_slug, concept_to_dict
 from app.services.pdf_storage import resolve_pdf_storage_path
 from app.users import DEFAULT_USER_ID
-from app.workers.landscape_job import run_landscape_job
+from app.workers.landscape_job import job_channel, run_landscape_job
 from app.workers.queue import get_queue
 
 
@@ -123,6 +126,15 @@ def get_landscape(landscape_id: str, s: Session = Depends(get_session)) -> Lands
     return LandscapeOut.model_validate(row, from_attributes=True)
 
 
+def _papers_by_id(s: Session, paper_ids: list[str]) -> dict[str, Paper]:
+    """Batch-load papers into an id->Paper map (avoids per-link N+1 gets)."""
+    ids = [pid for pid in dict.fromkeys(paper_ids) if pid]
+    if not ids:
+        return {}
+    rows = s.exec(select(Paper).where(Paper.id.in_(ids))).all()
+    return {p.id: p for p in rows}
+
+
 @router.get("/landscapes/{landscape_id}/papers", response_model=list[LandscapePaperOut])
 def get_landscape_papers(landscape_id: str, s: Session = Depends(get_session)) -> list[LandscapePaperOut]:
     links = s.exec(
@@ -130,9 +142,10 @@ def get_landscape_papers(landscape_id: str, s: Session = Depends(get_session)) -
         .where(LandscapePaper.landscape_id == landscape_id)
         .order_by(LandscapePaper.score.desc())
     ).all()
+    papers = _papers_by_id(s, [link.paper_id for link in links])
     out: list[LandscapePaperOut] = []
     for link in links:
-        paper = s.get(Paper, link.paper_id)
+        paper = papers.get(link.paper_id)
         if paper is None:
             continue
         out.append(
@@ -206,9 +219,10 @@ def get_landscape_graph(landscape_id: str, s: Session = Depends(get_session)) ->
         .where(LandscapePaper.landscape_id == landscape_id)
         .order_by(LandscapePaper.score.desc())
     ).all()
+    papers = _papers_by_id(s, [link.paper_id for link in links])
     nodes: list[PaperGraphNode] = []
     for link in links:
-        paper = s.get(Paper, link.paper_id)
+        paper = papers.get(link.paper_id)
         if paper is None:
             continue
         nodes.append(
@@ -343,57 +357,203 @@ def _pdf_file_path(pdf: PaperPdf | None) -> Path | None:
 # ---------------------------------------------------------------------------
 # Jobs
 # ---------------------------------------------------------------------------
+def _job_out(s: Session, job: SearchJob) -> JobOut:
+    rows = s.exec(
+        select(JobEvent).where(JobEvent.job_id == job.id).order_by(JobEvent.seq)
+    ).all()
+    return JobOut(
+        id=job.id,
+        landscape_id=job.landscape_id,
+        stage=job.stage,
+        progress=job.progress,
+        cancel_requested=job.cancel_requested,
+        events=[
+            {
+                "ts": e.ts,
+                "stage": e.stage,
+                "message": e.message,
+                "progress": e.progress,
+                "meta": e.meta or {},
+            }
+            for e in rows
+        ],
+        error=job.error,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+    )
+
+
 @router.get("/jobs/{job_id}", response_model=JobOut)
 def get_job(job_id: str, s: Session = Depends(get_session)) -> JobOut:
     job = s.get(SearchJob, job_id)
     if job is None:
         raise HTTPException(404, "job not found")
-    return JobOut.model_validate(job, from_attributes=True)
+    return _job_out(s, job)
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=JobOut)
+def cancel_job(job_id: str, s: Session = Depends(get_session)) -> JobOut:
+    """Request cooperative cancellation. The worker observes the flag at stage
+    boundaries and finalizes the job as ``cancelled``."""
+    job = s.get(SearchJob, job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    if job.stage not in TERMINAL_STAGES:
+        job.cancel_requested = True
+        s.add(job)
+        s.flush()
+    s.refresh(job)
+    return _job_out(s, job)
+
+
+# SSE tuning. EventSourceResponse already emits periodic ping comments to keep
+# the connection alive, so we only handle event delivery + a stall watchdog.
+_SSE_POLL_SECONDS = 2.0
+_SSE_STALL_SECONDS = 90.0
+_SSE_MAX_LIFETIME_SECONDS = 2 * 60 * 60
 
 
 @router.get("/jobs/{job_id}/events")
 async def job_events(job_id: str) -> EventSourceResponse:
-    """SSE stream of job events. Polls the DB on a short interval — good
-    enough for an alpha and avoids inventing a separate pubsub channel."""
+    """SSE stream of job events.
+
+    Pushes via Redis pub/sub (the worker publishes on every event) with a short
+    DB poll as a fallback so nothing is missed if a notification is dropped.
+    Ordering + cursoring use the monotonic ``job_events.seq``.
+    """
+
+    def _load_since(last_seq: int) -> dict[str, Any] | None:
+        with session_scope() as s:
+            job = s.get(SearchJob, job_id)
+            if job is None:
+                return None
+            rows = s.exec(
+                select(JobEvent)
+                .where(JobEvent.job_id == job_id, JobEvent.seq > last_seq)
+                .order_by(JobEvent.seq)
+            ).all()
+            payloads = [
+                (
+                    int(r.seq),
+                    _normalise_job_event(
+                        {
+                            "ts": r.ts.isoformat() + "Z",
+                            "stage": r.stage,
+                            "message": r.message,
+                            "progress": r.progress,
+                            "meta": r.meta or {},
+                        }
+                    ),
+                )
+                for r in rows
+            ]
+            return {
+                "payloads": payloads,
+                "stage": job.stage,
+                "progress": job.progress,
+                "error": job.error,
+                "finished_at": job.finished_at,
+                "landscape_id": job.landscape_id,
+            }
 
     async def gen():  # type: ignore[no-untyped-def]
-        last_seen = 0
+        from redis.asyncio import Redis as AsyncRedis
+
+        last_seq = 0
+        started = time.monotonic()
+        last_activity = time.monotonic()
+        stall_notified = False
+        aredis = None
+        pubsub = None
         try:
+            try:
+                aredis = AsyncRedis.from_url(get_settings().redis_url)
+                pubsub = aredis.pubsub()
+                await pubsub.subscribe(job_channel(job_id))
+            except Exception:  # noqa: BLE001 — pub/sub is an optimisation; polling still works
+                pubsub = None
+
             while True:
-                with session_scope() as s:
-                    job = s.get(SearchJob, job_id)
-                    if job is None:
-                        yield {
-                            "event": "error",
-                            "data": json.dumps(
-                                {
-                                    "ts": datetime.utcnow().isoformat() + "Z",
-                                    "stage": "error",
-                                    "progress": 0,
-                                    "message": "job not found",
-                                    "meta": {"job_id": job_id},
-                                }
-                            ),
-                        }
-                        return
-                    events = list(job.events or [])
-                    for ev in events[last_seen:]:
-                        payload = _normalise_job_event(ev)
-                        yield {"event": "progress", "id": str(last_seen), "data": json.dumps(payload)}
-                        last_seen += 1
-                    if job.stage in TERMINAL_STAGES:
-                        payload = {
-                            "ts": (job.finished_at or datetime.utcnow()).isoformat() + "Z",
-                            "stage": job.stage,
-                            "progress": job.progress,
-                            "message": "Pipeline complete" if job.stage == JobStage.DONE.value else (job.error or "Pipeline failed"),
-                            "meta": {"job_id": job_id, "landscape_id": job.landscape_id},
-                        }
-                        yield {"event": "complete", "id": "final", "data": json.dumps(payload)}
-                        return
-                await asyncio.sleep(1.0)
+                snap = await run_in_threadpool(_load_since, last_seq)
+                if snap is None:
+                    yield {
+                        "event": "error",
+                        "data": json.dumps(
+                            {
+                                "ts": datetime.utcnow().isoformat() + "Z",
+                                "stage": "error",
+                                "progress": 0,
+                                "message": "job not found",
+                                "meta": {"job_id": job_id},
+                            }
+                        ),
+                    }
+                    return
+
+                for seq, payload in snap["payloads"]:
+                    yield {"event": "progress", "id": str(seq), "data": json.dumps(payload)}
+                    last_seq = seq
+                    last_activity = time.monotonic()
+                    stall_notified = False
+
+                if snap["stage"] in TERMINAL_STAGES:
+                    yield {
+                        "event": "complete",
+                        "id": "final",
+                        "data": json.dumps(
+                            {
+                                "ts": (snap["finished_at"] or datetime.utcnow()).isoformat() + "Z",
+                                "stage": snap["stage"],
+                                "progress": snap["progress"],
+                                "message": "Pipeline complete"
+                                if snap["stage"] == JobStage.DONE.value
+                                else (snap["error"] or f"Pipeline {snap['stage']}"),
+                                "meta": {"job_id": job_id, "landscape_id": snap["landscape_id"]},
+                            }
+                        ),
+                    }
+                    return
+
+                now = time.monotonic()
+                if not stall_notified and (now - last_activity) > _SSE_STALL_SECONDS:
+                    stall_notified = True
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps(
+                            {
+                                "ts": datetime.utcnow().isoformat() + "Z",
+                                "stage": snap["stage"],
+                                "progress": snap["progress"],
+                                "message": "No progress received recently; the job may be stalled.",
+                                "meta": {"job_id": job_id, "stalled": True},
+                            }
+                        ),
+                    }
+                if (now - started) > _SSE_MAX_LIFETIME_SECONDS:
+                    return
+
+                # Wait for a pub/sub nudge, or fall through after the poll timeout.
+                if pubsub is not None:
+                    try:
+                        await pubsub.get_message(ignore_subscribe_messages=True, timeout=_SSE_POLL_SECONDS)
+                    except Exception:  # noqa: BLE001
+                        await asyncio.sleep(_SSE_POLL_SECONDS)
+                else:
+                    await asyncio.sleep(_SSE_POLL_SECONDS)
         except asyncio.CancelledError:
             return
+        finally:
+            if pubsub is not None:
+                try:
+                    await pubsub.unsubscribe(job_channel(job_id))
+                    await pubsub.aclose()
+                except Exception:  # noqa: BLE001
+                    pass
+            if aredis is not None:
+                try:
+                    await aredis.aclose()
+                except Exception:  # noqa: BLE001
+                    pass
 
     return EventSourceResponse(gen())
 
@@ -522,17 +682,23 @@ def _build_export_plan(landscape_id: str, s: Session, *, create_root: bool):  # 
     if not links:
         raise HTTPException(400, "landscape has no papers — run the pipeline first")
 
+    paper_ids = [link.paper_id for link in links]
+    papers = _papers_by_id(s, paper_ids)
+    ext_rows = s.exec(select(Extraction).where(Extraction.paper_id.in_(paper_ids))).all() if paper_ids else []
+    ext_by_paper = {e.paper_id: e for e in ext_rows}
+    pdf_rows = s.exec(select(PaperPdf).where(PaperPdf.paper_id.in_(paper_ids))).all() if paper_ids else []
+    pdf_by_paper = {p.paper_id: p for p in pdf_rows}
+
     landscape_papers: list[dict[str, Any]] = []
     extractions_by_paper: dict[str, dict[str, Any]] = {}
     for link in links:
-        paper = s.get(Paper, link.paper_id)
+        paper = papers.get(link.paper_id)
         if paper is None:
             continue
-        ext = s.exec(select(Extraction).where(Extraction.paper_id == link.paper_id)).first()
+        ext = ext_by_paper.get(link.paper_id)
         if ext:
             extractions_by_paper[paper.id] = ext.data
-        pdf = s.exec(select(PaperPdf).where(PaperPdf.paper_id == paper.id)).first()
-        pdf_path = _pdf_file_path(pdf)
+        pdf_path = _pdf_file_path(pdf_by_paper.get(paper.id))
         landscape_papers.append(
             {
                 "paper_id": paper.id,

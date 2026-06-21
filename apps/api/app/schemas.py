@@ -47,6 +47,7 @@ class JobOut(BaseModel):
     landscape_id: str
     stage: str
     progress: float
+    cancel_requested: bool = False
     events: list[JobEvent]
     error: Optional[str] = None
     started_at: Optional[datetime] = None

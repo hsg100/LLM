@@ -88,6 +88,10 @@ export async function apiPost<T>(path: string, body: any, init?: RequestInit, ti
   return r.json() as Promise<T>;
 }
 
+export async function cancelJob(jobId: string): Promise<Job> {
+  return apiPost<Job>(`/api/jobs/${jobId}/cancel`, {});
+}
+
 // ---------------- Shared types (frontend mirror of backend Pydantic) ---
 export type Paper = {
   id: string;
@@ -135,6 +139,7 @@ export type Job = {
   landscape_id: string;
   stage: string;
   progress: number;
+  cancel_requested?: boolean;
   events: JobEvent[];
   error: string | null;
   started_at: string | null;

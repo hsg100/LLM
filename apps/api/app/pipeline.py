@@ -34,8 +34,9 @@ class JobStage(str, Enum):
     CONCEPTS = "concepts"
     ACTIVE_RECALL = "active_recall"
     DONE = "done"
-    # Terminal failure — not part of the ordered progression.
+    # Terminal, out-of-band states (not part of the ordered progression).
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class LandscapeStatus(str, Enum):
@@ -43,6 +44,7 @@ class LandscapeStatus(str, Enum):
     RUNNING = "running"
     READY = "ready"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 # Ordered stages for the progress UI (excludes the out-of-band FAILED).
@@ -61,7 +63,9 @@ PIPELINE_STAGES: list[str] = [
 ]
 
 # Stages after which a job will emit no further progress.
-TERMINAL_STAGES: frozenset[str] = frozenset({JobStage.DONE.value, JobStage.FAILED.value})
+TERMINAL_STAGES: frozenset[str] = frozenset(
+    {JobStage.DONE.value, JobStage.FAILED.value, JobStage.CANCELLED.value}
+)
 
 # Human-readable labels (the frontend mirror may localize/override these).
 STAGE_LABELS: dict[str, str] = {
@@ -77,4 +81,5 @@ STAGE_LABELS: dict[str, str] = {
     JobStage.ACTIVE_RECALL.value: "Quiz & flashcards",
     JobStage.DONE.value: "Complete",
     JobStage.FAILED.value: "Failed",
+    JobStage.CANCELLED.value: "Cancelled",
 }

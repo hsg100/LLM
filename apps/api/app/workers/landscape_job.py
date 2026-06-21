@@ -21,7 +21,7 @@ import asyncio
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import delete
+from sqlalchemy import delete, func, update
 from sqlmodel import select
 
 from app.config import get_settings
@@ -33,6 +33,7 @@ from app.models import (
     ClusterPaper,
     Extraction,
     Flashcard,
+    JobEvent,
     Landscape,
     LandscapePaper,
     Paper,
@@ -99,6 +100,7 @@ async def _run(job_id: str) -> None:
         s.add(job)
 
     try:
+        _raise_if_cancelled(job_id)
         # ----- 1. Search -----
         candidates: list[PaperCandidate] = []
         outcomes: list[SearchOutcome] = []
@@ -289,6 +291,7 @@ async def _run(job_id: str) -> None:
             _append_event(job_id, "downloading_pdfs", "skipped (parse_pdfs=false)", 0.48)
 
         # ----- 6. Extract per paper -----
+        _raise_if_cancelled(job_id)
         _set_stage(job_id, "extracting", 0.5, "Extracting structured notes")
         llm_fast = get_llm(strong=False)
         extraction_quality = await _extract_all(job_id, ranked, paper_ids, llm_fast)
@@ -302,6 +305,7 @@ async def _run(job_id: str) -> None:
             )
 
         # ----- 7. Synthesise -----
+        _raise_if_cancelled(job_id)
         _set_stage(job_id, "synthesising", 0.78, "Synthesising landscape")
         bundle = _load_landscape_bundle(job_id, paper_ids)
         llm_strong = get_llm(strong=True)
@@ -369,6 +373,7 @@ async def _run(job_id: str) -> None:
             )
 
         # ----- 8. Active recall -----
+        _raise_if_cancelled(job_id)
         _set_stage(job_id, "active_recall", 0.9, "Generating quiz + flashcards")
         quizzes, flashcards = await generate_quizzes_and_flashcards(
             llm_fast,
@@ -381,6 +386,9 @@ async def _run(job_id: str) -> None:
         _set_stage(job_id, JobStage.DONE.value, 1.0, "Pipeline complete")
         _finalize(job_id, status=LandscapeStatus.READY.value)
 
+    except JobCancelled:
+        _set_cancelled(job_id)
+        return
     except Exception as e:  # noqa: BLE001
         _set_error(job_id, f"pipeline error: {e!s}")
         raise
@@ -904,9 +912,18 @@ def _load_landscape_bundle(job_id: str, paper_ids: dict[str, str]) -> list[dict[
         links = s.exec(
             select(LandscapePaper).where(LandscapePaper.landscape_id == landscape_id)
         ).all()
+        link_ids = [link.paper_id for link in links]
+        papers = {
+            p.id: p
+            for p in (s.exec(select(Paper).where(Paper.id.in_(link_ids))).all() if link_ids else [])
+        }
+        exts = {
+            e.paper_id: e
+            for e in (s.exec(select(Extraction).where(Extraction.paper_id.in_(link_ids))).all() if link_ids else [])
+        }
         for link in links:
-            paper = s.get(Paper, link.paper_id)
-            ext = s.exec(select(Extraction).where(Extraction.paper_id == link.paper_id)).first()
+            paper = papers.get(link.paper_id)
+            ext = exts.get(link.paper_id)
             if paper is None:
                 continue
             bundle.append(
@@ -950,6 +967,15 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
         s.flush()
 
         title_to_pid = {b["title"]: b["paper_id"] for b in bundle}
+        bundle_pids = {b["paper_id"] for b in bundle}
+        # Batch-load this landscape's links once; reuse the map for all the
+        # cluster / reading-path / refresh lookups below (was N+1 per paper).
+        links_by_pid = {
+            link.paper_id: link
+            for link in s.exec(
+                select(LandscapePaper).where(LandscapePaper.landscape_id == landscape_id)
+            ).all()
+        }
         for ord_, c in enumerate(synthesis_dict.get("clusters") or []):
             row = Cluster(
                 landscape_id=landscape_id,
@@ -960,44 +986,29 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
             s.add(row)
             s.flush()
             for pid_or_title in c.get("paper_ids") or []:
-                paper_id = pid_or_title if pid_or_title in {b["paper_id"] for b in bundle} else title_to_pid.get(pid_or_title)
+                paper_id = pid_or_title if pid_or_title in bundle_pids else title_to_pid.get(pid_or_title)
                 if paper_id:
                     s.add(ClusterPaper(cluster_id=row.id, paper_id=paper_id))
                     # Set landscape_paper cluster + reading order
-                    link = s.exec(
-                        select(LandscapePaper).where(
-                            LandscapePaper.landscape_id == landscape_id,
-                            LandscapePaper.paper_id == paper_id,
-                        )
-                    ).first()
+                    link = links_by_pid.get(paper_id)
                     if link is not None:
                         link.cluster_id = row.id
                         s.add(link)
 
         for step_idx, step in enumerate(synthesis_dict.get("reading_path") or []):
             pid = step.get("paper_id")
-            if pid not in {b["paper_id"] for b in bundle}:
+            if pid not in bundle_pids:
                 pid = title_to_pid.get(step.get("title"))
             if not pid:
                 continue
-            link = s.exec(
-                select(LandscapePaper).where(
-                    LandscapePaper.landscape_id == landscape_id,
-                    LandscapePaper.paper_id == pid,
-                )
-            ).first()
+            link = links_by_pid.get(pid)
             if link is not None:
                 link.reading_order = step_idx + 1
                 s.add(link)
 
         refreshed_bundle: list[dict[str, Any]] = []
         for b in bundle:
-            link = s.exec(
-                select(LandscapePaper).where(
-                    LandscapePaper.landscape_id == landscape_id,
-                    LandscapePaper.paper_id == b["paper_id"],
-                )
-            ).first()
+            link = links_by_pid.get(b["paper_id"])
             item = dict(b)
             item["cluster_id"] = link.cluster_id if link else b.get("cluster_id")
             refreshed_bundle.append(item)
@@ -1063,8 +1074,66 @@ def _persist_quiz_and_flashcards(
 
 
 # ---------------------------------------------------------------------------
-# Job event helpers
+# Cancellation
 # ---------------------------------------------------------------------------
+class JobCancelled(Exception):
+    """Raised when a job's cancel_requested flag is observed at a stage boundary."""
+
+
+def _is_cancel_requested(job_id: str) -> bool:
+    with session_scope() as s:
+        job = s.get(SearchJob, job_id)
+        return bool(job and job.cancel_requested)
+
+
+def _raise_if_cancelled(job_id: str) -> None:
+    if _is_cancel_requested(job_id):
+        raise JobCancelled()
+
+
+# ---------------------------------------------------------------------------
+# Job event helpers
+#
+# Events are append-only rows in ``job_events`` (one INSERT each), and progress
+# is advanced with an atomic ``GREATEST`` UPDATE. This removes the prior
+# read-modify-write race on a JSONB list shared by concurrent pipeline tasks.
+# After each commit we publish a notification so the SSE endpoint can push.
+# ---------------------------------------------------------------------------
+def job_channel(job_id: str) -> str:
+    return f"fieldmap:jobevents:{job_id}"
+
+
+def _publish(job_id: str, seq: Optional[int]) -> None:
+    """Best-effort wake-up for SSE subscribers; never fails the pipeline."""
+    try:
+        from app.workers.queue import get_redis
+
+        get_redis().publish(job_channel(job_id), str(seq if seq is not None else ""))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _insert_event(
+    s,  # type: ignore[no-untyped-def]
+    job_id: str,
+    stage: str,
+    message: str,
+    progress: float,
+    meta: Optional[dict[str, Any]],
+) -> Optional[int]:
+    ev = JobEvent(
+        job_id=job_id,
+        stage=stage,
+        message=message,
+        progress=progress,
+        meta=meta or {},
+        ts=datetime.utcnow(),
+    )
+    s.add(ev)
+    s.flush()  # assign the DB-side seq identity
+    return ev.seq
+
+
 def _set_stage(
     job_id: str,
     stage: str,
@@ -1072,16 +1141,16 @@ def _set_stage(
     message: str,
     meta: Optional[dict[str, Any]] = None,
 ) -> None:
+    seq: Optional[int] = None
     with session_scope() as s:
         job = s.get(SearchJob, job_id)
         if job is None:
             return
         job.stage = stage
         job.progress = progress
-        events = list(job.events or [])
-        events.append(_event(stage, message, progress, meta))
-        job.events = events
         s.add(job)
+        seq = _insert_event(s, job_id, stage, message, progress, meta)
+    _publish(job_id, seq)
 
 
 def _append_event(
@@ -1091,30 +1160,23 @@ def _append_event(
     progress: float,
     meta: Optional[dict[str, Any]] = None,
 ) -> None:
+    seq: Optional[int] = None
     with session_scope() as s:
         job = s.get(SearchJob, job_id)
         if job is None:
             return
-        events = list(job.events or [])
-        events.append(_event(stage, message, progress, meta))
-        job.events = events
-        job.progress = max(job.progress, progress)
-        s.add(job)
-
-
-def _event(stage: str, message: str, progress: float, meta: Optional[dict[str, Any]]) -> dict[str, Any]:
-    ev: dict[str, Any] = {
-        "ts": datetime.utcnow().isoformat() + "Z",
-        "stage": stage,
-        "message": message,
-        "progress": progress,
-    }
-    if meta:
-        ev["meta"] = meta
-    return ev
+        # Atomic monotonic progress — safe under concurrent gather() tasks.
+        s.execute(
+            update(SearchJob)
+            .where(SearchJob.id == job_id)
+            .values(progress=func.greatest(SearchJob.progress, progress))
+        )
+        seq = _insert_event(s, job_id, stage, message, progress, meta)
+    _publish(job_id, seq)
 
 
 def _set_error(job_id: str, msg: str, meta: Optional[dict[str, Any]] = None) -> None:
+    seq: Optional[int] = None
     with session_scope() as s:
         job = s.get(SearchJob, job_id)
         if job is None:
@@ -1122,14 +1184,30 @@ def _set_error(job_id: str, msg: str, meta: Optional[dict[str, Any]] = None) -> 
         job.error = msg
         job.stage = JobStage.FAILED.value
         job.finished_at = datetime.utcnow()
-        events = list(job.events or [])
-        events.append(_event(JobStage.FAILED.value, msg, job.progress, meta))
-        job.events = events
         s.add(job)
+        seq = _insert_event(s, job_id, JobStage.FAILED.value, msg, job.progress, meta)
         landscape = s.get(Landscape, job.landscape_id)
         if landscape:
             landscape.status = LandscapeStatus.FAILED.value
             s.add(landscape)
+    _publish(job_id, seq)
+
+
+def _set_cancelled(job_id: str) -> None:
+    seq: Optional[int] = None
+    with session_scope() as s:
+        job = s.get(SearchJob, job_id)
+        if job is None:
+            return
+        job.stage = JobStage.CANCELLED.value
+        job.finished_at = datetime.utcnow()
+        s.add(job)
+        seq = _insert_event(s, job_id, JobStage.CANCELLED.value, "Job cancelled", job.progress, None)
+        landscape = s.get(Landscape, job.landscape_id)
+        if landscape:
+            landscape.status = LandscapeStatus.CANCELLED.value
+            s.add(landscape)
+    _publish(job_id, seq)
 
 
 def _finalize(job_id: str, status: str) -> None:
@@ -1143,3 +1221,4 @@ def _finalize(job_id: str, status: str) -> None:
         if landscape:
             landscape.status = status
             s.add(landscape)
+    _publish(job_id, None)

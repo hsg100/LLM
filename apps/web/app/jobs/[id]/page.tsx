@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { apiGet, apiUrl, Job, JobEvent } from "../../../lib/api";
+import { apiGet, apiUrl, cancelJob, Job, JobEvent } from "../../../lib/api";
 import { STAGE_DEFS, STAGE_INDEX, isTerminalStage } from "../../../lib/pipeline";
 
 type StageStatus = "done" | "active" | "pending";
@@ -144,6 +144,19 @@ export default function JobPage({ params }: { params: { id: string } }) {
   const [job, setJob] = useState<Job | null>(null);
   const [pollErr, setPollErr] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [cancelling, setCancelling] = useState(false);
+
+  async function handleCancel() {
+    setCancelling(true);
+    try {
+      const updated = await cancelJob(params.id);
+      setJob(updated);
+    } catch (e: any) {
+      setPollErr(e?.message || "Failed to cancel job");
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   useEffect(() => {
     let stopped = false;
@@ -248,8 +261,10 @@ export default function JobPage({ params }: { params: { id: string } }) {
   const activity = currentActivity(job, events);
   const activityRows = activityMetaRows(activity.meta);
   const isDone = job?.stage === "done";
-  const isFailed = job?.stage === "failed";
-  const isRunning = !isDone && !isFailed;
+  const isCancelled = job?.stage === "cancelled";
+  // Cancelled shares the "stopped" (red) styling with failed.
+  const isFailed = job?.stage === "failed" || isCancelled;
+  const isRunning = !!job && !isTerminalStage(job.stage);
 
   const usedFallback = useMemo(
     () =>
@@ -278,7 +293,13 @@ export default function JobPage({ params }: { params: { id: string } }) {
             margin: 0,
           }}
         >
-          {isFailed ? "Landscape job failed" : isDone ? "Landscape ready" : "Building landscape"}
+          {isCancelled
+            ? "Landscape job cancelled"
+            : isFailed
+            ? "Landscape job failed"
+            : isDone
+            ? "Landscape ready"
+            : "Building landscape"}
         </h1>
         <span
           style={{
@@ -315,7 +336,7 @@ export default function JobPage({ params }: { params: { id: string } }) {
               letterSpacing: "0.05em",
             }}
           >
-            {isDone ? "READY" : isFailed ? "FAILED" : "RUNNING"}
+            {isDone ? "READY" : isCancelled ? "CANCELLED" : isFailed ? "FAILED" : "RUNNING"}
           </span>
         </span>
         {usedFallback && (
@@ -332,6 +353,26 @@ export default function JobPage({ params }: { params: { id: string } }) {
           >
             DEV FALLBACK
           </span>
+        )}
+        {isRunning && (
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={cancelling || job?.cancel_requested}
+            style={{
+              marginLeft: "auto",
+              fontSize: 12,
+              padding: "5px 12px",
+              borderRadius: 8,
+              border: "1px solid var(--bd)",
+              background: "transparent",
+              color: "var(--t2)",
+              cursor: cancelling || job?.cancel_requested ? "default" : "pointer",
+              opacity: cancelling || job?.cancel_requested ? 0.6 : 1,
+            }}
+          >
+            {job?.cancel_requested ? "Cancelling…" : cancelling ? "Cancelling…" : "Cancel job"}
+          </button>
         )}
       </div>
       <p
