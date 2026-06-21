@@ -8,11 +8,40 @@ from app.config import Settings
 from app.services.embeddings import (
     EmbeddingDimensionError,
     EmbeddingProvider,
+    EmbeddingProviderConfigError,
+    LocalEmbeddings,
     StubEmbeddings,
+    get_embedding_provider,
     validate_embedding_configuration,
 )
 from app.services.paper_sources.base import PaperCandidate
 from app.services.ranking import rank_papers
+
+
+def test_local_provider_accepts_matching_dim():
+    validate_embedding_configuration(
+        Settings(embedding_provider="local", embedding_model="BAAI/bge-small-en-v1.5", embedding_dim=384)
+    )
+
+
+def test_local_provider_rejects_wrong_dim():
+    with pytest.raises(EmbeddingProviderConfigError):
+        validate_embedding_configuration(
+            Settings(embedding_provider="local", embedding_model="BAAI/bge-small-en-v1.5", embedding_dim=1536)
+        )
+
+
+def test_get_embedding_provider_returns_local_without_download(monkeypatch):
+    import app.services.embeddings as emb
+
+    s = Settings(embedding_provider="local", embedding_model="BAAI/bge-small-en-v1.5", embedding_dim=384)
+    monkeypatch.setattr(emb, "get_settings", lambda: s)
+    provider = get_embedding_provider()
+    # Construction must be lazy — no model loaded yet.
+    assert isinstance(provider, LocalEmbeddings)
+    assert provider.name == "local"
+    assert provider.dim == 384
+    assert provider._embedder is None
 
 
 def test_stub_embeddings_are_plain_float_lists_with_configured_dimension():

@@ -1,7 +1,7 @@
 """SQLModel tables for FieldMap.
 
 Embedding columns use pgvector with a fixed dimension matching
-``Settings.embedding_dim`` (1536 by default). All flexible/optional
+``Settings.embedding_dim`` (384 by default, for local bge-small). All flexible/optional
 LLM output is stored in JSONB so the schema does not break when
 prompts evolve.
 """

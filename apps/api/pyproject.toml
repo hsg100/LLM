@@ -10,6 +10,7 @@ dependencies = [
   "alembic>=1.13",
   "psycopg[binary]>=3.2",
   "pgvector>=0.3",
+  "fastembed>=0.3",
   "pydantic>=2.8",
   "pydantic-settings>=2.4",
   "httpx>=0.27",

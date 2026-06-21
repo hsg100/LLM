@@ -23,9 +23,10 @@ class Settings(BaseSettings):
     #   fast   → cheaper chat model for quiz/flashcards + short generations
     llm_model_fast: str = "deepseek-chat"
     llm_model_strong: str = "deepseek-reasoner"
-    embedding_provider: str = "stub"
-    embedding_model: str = "stub"
-    embedding_dim: int = 1536
+    # Local (fastembed/ONNX) is the cost-free default; bge-small is 384-d.
+    embedding_provider: str = "local"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_dim: int = 384
     enable_embedding_dev_fallback: bool = True
     allow_embedding_fallback_in_production: bool = False
 

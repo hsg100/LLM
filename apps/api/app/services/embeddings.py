@@ -33,6 +33,14 @@ OPENAI_MODEL_DIMS = {
 DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 OPENAI_DIMENSIONS_PARAM_MODELS = {"text-embedding-3-small", "text-embedding-3-large"}
 
+# Known fastembed model dimensions (validated against EMBEDDING_DIM).
+LOCAL_MODEL_DIMS = {
+    "BAAI/bge-small-en-v1.5": 384,
+    "BAAI/bge-base-en-v1.5": 768,
+    "sentence-transformers/all-MiniLM-L6-v2": 384,
+}
+DEFAULT_LOCAL_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+
 
 class EmbeddingProviderError(RuntimeError):
     """Base error for embedding provider failures."""
@@ -93,6 +101,45 @@ class StubEmbeddings(EmbeddingProvider):
         return _l2_normalize(vec)
 
 
+class LocalEmbeddings(EmbeddingProvider):
+    """CPU-friendly local embeddings via fastembed (ONNX). No API key, no cost.
+
+    The model is loaded lazily on first use so importing this module — and
+    constructing the provider — never requires fastembed to be importable or a
+    model to be downloaded.
+    """
+
+    def __init__(self, model: str, dim: int):
+        self.model = model
+        self.dim = dim
+        self.name = "local"
+        self.configured_provider = "local"
+        self.fallback_reason = None
+        self._embedder: Any = None
+
+    def _ensure_embedder(self) -> Any:
+        if self._embedder is None:
+            try:
+                from fastembed import TextEmbedding
+            except Exception as e:  # noqa: BLE001
+                raise EmbeddingProviderConfigError(
+                    "EMBEDDING_PROVIDER=local requires the 'fastembed' package"
+                ) from e
+            self._embedder = TextEmbedding(model_name=self.model)
+        return self._embedder
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        import asyncio
+
+        embedder = self._ensure_embedder()
+        # fastembed is synchronous/CPU-bound — keep it off the event loop.
+        vectors = await asyncio.to_thread(
+            lambda: [_plain_vector(v) for v in embedder.embed(list(texts))]
+        )
+        _validate_embedding_batch(vectors, expected_count=len(texts), dim=self.dim)
+        return vectors
+
+
 class OpenAIEmbeddings(EmbeddingProvider):
     def __init__(self, api_key: str, model: str, dim: int):
         if not api_key:
@@ -139,6 +186,9 @@ def get_embedding_provider() -> EmbeddingProvider:
     provider = (s.embedding_provider or "stub").lower().strip()
     if provider == "stub":
         return StubEmbeddings(s.embedding_dim, model=s.embedding_model or "stub")
+    if provider == "local":
+        validate_embedding_configuration(s)
+        return LocalEmbeddings(_model_for_provider(s), s.embedding_dim)
     if provider == "openai" and s.openai_api_key:
         validate_embedding_configuration(s)
         return OpenAIEmbeddings(s.openai_api_key, _model_for_provider(s), s.embedding_dim)
@@ -197,6 +247,16 @@ def validate_embedding_configuration(settings: Settings | None = None) -> None:
         raise EmbeddingProviderConfigError("EMBEDDING_DIM must be a positive integer")
     if provider == "stub":
         return
+    if provider == "local":
+        model = _model_for_provider(s)
+        if not model:
+            raise EmbeddingProviderConfigError("EMBEDDING_MODEL is required for EMBEDDING_PROVIDER=local")
+        known = LOCAL_MODEL_DIMS.get(model)
+        if known is not None and s.embedding_dim != known:
+            raise EmbeddingProviderConfigError(
+                f"{model} produces {known}-d vectors; set EMBEDDING_DIM={known}"
+            )
+        return
     if provider != "openai":
         raise EmbeddingProviderConfigError(f"unsupported EMBEDDING_PROVIDER={s.embedding_provider!r}")
 
@@ -223,6 +283,8 @@ def _model_for_provider(settings: Settings) -> str:
     provider = (settings.embedding_provider or "stub").lower().strip()
     if provider == "openai" and (not model or model == "stub"):
         return DEFAULT_OPENAI_EMBEDDING_MODEL
+    if provider == "local" and (not model or model == "stub"):
+        return DEFAULT_LOCAL_EMBEDDING_MODEL
     return model
 
 
