@@ -84,26 +84,106 @@ class PaperSource(ABC):
         can keep moving."""
 
 
+def _identity_keys(c: PaperCandidate) -> list[tuple[str, str]]:
+    """All identity keys a candidate carries. Two candidates are the same paper
+    if they share ANY key (DOI, versionless arXiv id, or normalized title)."""
+    keys: list[tuple[str, str]] = []
+    if c.doi and c.doi.strip():
+        keys.append(("doi", c.doi.strip().lower()))
+    arxiv = (c.arxiv_id or "").split("v")[0].strip().lower()
+    if arxiv:
+        keys.append(("arxiv", arxiv))
+    if c.title_norm:
+        keys.append(("title", c.title_norm))
+    if not keys:
+        keys.append(("ext", f"{c.source}:{c.external_id}"))
+    return keys
+
+
+# Lower number = preferred identity/source when merging a duplicate group.
+# Semantic Scholar / OpenAlex carry citation signal; arXiv reliably has a PDF.
+_SOURCE_PRIORITY = {"semantic_scholar": 0, "openalex": 1, "crossref": 2, "arxiv": 3, "stub": 9}
+
+
+def merge_candidates(group: list[PaperCandidate]) -> PaperCandidate:
+    """Merge duplicates of one paper into a single richest record.
+
+    Identity (source/external_id) is taken from the highest-priority source;
+    missing scalar fields are backfilled from the rest, ``citation_count`` is the
+    max seen, and ``pdf_url`` is borrowed from whichever source has one.
+    """
+    if len(group) == 1:
+        return group[0]
+    ordered = sorted(group, key=lambda c: _SOURCE_PRIORITY.get(c.source, 5))
+    primary = ordered[0]
+
+    def first(attr: str) -> Any:
+        for c in ordered:
+            v = getattr(c, attr)
+            if v:
+                return v
+        return getattr(primary, attr)
+
+    citations = [c.citation_count for c in group if c.citation_count is not None]
+    authors = max((c.authors for c in ordered), key=lambda a: len(a or []), default=primary.authors)
+    merged_meta: dict[str, Any] = {}
+    for c in ordered:
+        merged_meta.update(c.metadata or {})
+    merged_meta["merged_sources"] = sorted({c.source for c in group})
+
+    return PaperCandidate(
+        source=primary.source,
+        external_id=primary.external_id,
+        title=primary.title or first("title"),
+        abstract=first("abstract"),
+        authors=authors or [],
+        year=first("year"),
+        venue=first("venue"),
+        citation_count=max(citations) if citations else None,
+        pdf_url=first("pdf_url"),
+        arxiv_id=first("arxiv_id"),
+        doi=first("doi"),
+        url=first("url"),
+        metadata=merged_meta,
+    )
+
+
 def dedupe(candidates: list[PaperCandidate]) -> list[PaperCandidate]:
-    """Dedupe by (arxiv_id without version), then (source, external_id), then normalized title."""
-    seen_arxiv: set[str] = set()
-    seen_ext: set[tuple[str, str]] = set()
-    seen_titles: set[str] = set()
-    out: list[PaperCandidate] = []
-    for c in candidates:
-        key_arxiv = (c.arxiv_id or "").split("v")[0].strip()
-        key_ext = (c.source, c.external_id)
-        key_title = c.title_norm
-        if key_arxiv and key_arxiv in seen_arxiv:
-            continue
-        if key_ext in seen_ext:
-            continue
-        if key_title and key_title in seen_titles:
-            continue
-        if key_arxiv:
-            seen_arxiv.add(key_arxiv)
-        seen_ext.add(key_ext)
-        if key_title:
-            seen_titles.add(key_title)
-        out.append(c)
-    return out
+    """Merge duplicates across sources, preserving first-seen order.
+
+    Uses union-find over identity keys so a paper that shares *any* key with
+    another (e.g. arXiv id from arXiv, DOI from Semantic Scholar) collapses into
+    one merged record — even when neither source carries every identifier.
+    """
+    n = len(candidates)
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)  # keep the earlier index as root
+
+    key_owner: dict[tuple[str, str], int] = {}
+    for i, c in enumerate(candidates):
+        for key in _identity_keys(c):
+            owner = key_owner.get(key)
+            if owner is None:
+                key_owner[key] = i
+            else:
+                union(i, owner)
+
+    groups: dict[int, list[PaperCandidate]] = {}
+    order: list[int] = []
+    for i, c in enumerate(candidates):
+        root = find(i)
+        if root not in groups:
+            groups[root] = []
+            order.append(root)
+        groups[root].append(c)
+    return [merge_candidates(groups[root]) for root in order]

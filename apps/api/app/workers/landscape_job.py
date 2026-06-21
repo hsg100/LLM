@@ -92,7 +92,7 @@ async def _run(job_id: str) -> None:
             return
         topic = landscape.topic
         max_papers = int(landscape.settings.get("max_papers") or settings.max_papers_per_landscape)
-        sources = landscape.settings.get("sources") or ["arxiv"]
+        sources = landscape.settings.get("sources") or ["arxiv", "semantic_scholar"]
         parse_pdfs_flag = bool(landscape.settings.get("parse_pdfs", True))
         landscape.status = LandscapeStatus.RUNNING.value
         s.add(landscape)
@@ -442,7 +442,15 @@ def _persist_papers_and_links(job_id: str, ranked) -> dict[str, str]:  # type: i
                 # Never use it in a boolean context.
                 if not has_embedding(paper.embedding) and r_embedding_list is not None:
                     paper.embedding = r_embedding_list
-                    s.add(paper)
+                # Refresh citation count (it changes over time) and backfill
+                # identifiers/PDF that a richer source may now provide.
+                if cand.citation_count is not None:
+                    paper.citation_count = cand.citation_count
+                if not paper.doi and cand.doi:
+                    paper.doi = cand.doi
+                if not paper.pdf_url and cand.pdf_url:
+                    paper.pdf_url = cand.pdf_url
+                s.add(paper)
             link = s.exec(
                 select(LandscapePaper).where(
                     LandscapePaper.landscape_id == landscape_id,
@@ -803,16 +811,9 @@ async def _extract_all(
                 ext.model = getattr(llm, "default_model", None)
                 ext.confidence = result.data.get("confidence")
                 s.add(ext)
-                # Also reflect difficulty / priority onto the landscape link.
-                link = s.exec(
-                    select(LandscapePaper).where(
-                        LandscapePaper.landscape_id == _landscape_id_of(s, job_id),
-                        LandscapePaper.paper_id == paper_id,
-                    )
-                ).first()
-                if link is not None and result.data.get("reading_priority"):
-                    link.category = result.data["reading_priority"]
-                    s.add(link)
+                # NB: ranking is the single owner of LandscapePaper.category.
+                # The extraction's reading_priority lives in extraction.data and
+                # informs synthesis, but must not overwrite the ranked category.
             async with stats_lock:
                 stats["total"] += 1
                 grounding = (result.data.get("_fieldmap") or {}).get("grounding") or {}

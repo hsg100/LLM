@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 class LandscapeCreate(BaseModel):
     topic: str = Field(min_length=2, max_length=500)
     max_papers: Optional[int] = None
-    sources: list[str] = Field(default_factory=lambda: ["arxiv"])
+    sources: list[str] = Field(default_factory=lambda: ["arxiv", "semantic_scholar"])
     parse_pdfs: bool = True
     settings: dict[str, Any] = Field(default_factory=dict)
 
