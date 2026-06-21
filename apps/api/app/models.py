@@ -339,6 +339,23 @@ class ReviewAttempt(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 # Exports
 # ---------------------------------------------------------------------------
+class RuntimeSettings(SQLModel, table=True):
+    """Single-row store of runtime-editable setting overrides.
+
+    A JSONB ``overrides`` map (setting name -> value) layered on top of the
+    env-based defaults by app.runtime_settings.effective_settings(). Secrets and
+    schema-coupled values (DB/Redis URLs, embedding dim) stay env-only.
+    """
+
+    __tablename__ = "runtime_settings"
+
+    id: str = Field(default="singleton", primary_key=True)
+    overrides: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}"))
+    updated_at: datetime = Field(
+        sa_column=Column(DateTime, default=_now, onupdate=_now, nullable=False)
+    )
+
+
 class ObsidianExport(SQLModel, table=True):
     __tablename__ = "obsidian_exports"
 

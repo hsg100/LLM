@@ -67,6 +67,7 @@ from app.schemas import (
     SettingsPatch,
     Extraction as ExtractionSchema,
 )
+from app.runtime_settings import EDITABLE_FIELDS, effective_settings, set_overrides
 from app.services.concepts import build_concept_map, concept_slug, concept_to_dict
 from app.services.pdf_storage import resolve_pdf_storage_path
 from app.users import DEFAULT_USER_ID
@@ -86,7 +87,7 @@ def create_landscape(body: LandscapeCreate, s: Session = Depends(get_session)) -
         topic=body.topic,
         user_id=DEFAULT_USER_ID,
         settings={
-            "max_papers": body.max_papers or get_settings().max_papers_per_landscape,
+            "max_papers": body.max_papers or effective_settings().max_papers_per_landscape,
             "sources": body.sources,
             "parse_pdfs": body.parse_pdfs,
             **(body.settings or {}),
@@ -578,7 +579,8 @@ def get_flashcards(landscape_id: str, s: Session = Depends(get_session)) -> list
 # ---------------------------------------------------------------------------
 @router.get("/settings", response_model=SettingsOut)
 def get_settings_route() -> SettingsOut:
-    s = get_settings()
+    # Effective view = env defaults + persisted runtime overrides.
+    s = effective_settings()
     return SettingsOut(
         llm_provider=s.llm_provider,
         llm_model_fast=s.llm_model_fast,
@@ -592,14 +594,18 @@ def get_settings_route() -> SettingsOut:
         has_openai_key=bool(s.openai_api_key),
         has_deepseek_key=bool(s.deepseek_api_key),
         has_anthropic_key=bool(s.anthropic_api_key),
+        editable_fields=list(EDITABLE_FIELDS.keys()),
     )
 
 
 @router.patch("/settings", response_model=SettingsOut)
-def patch_settings(_: SettingsPatch) -> SettingsOut:
-    # We deliberately don't mutate runtime env from PATCH in v1 — settings
-    # live in .env. This endpoint exists to keep the contract stable for the
-    # frontend; it returns the current view.
+def patch_settings(body: SettingsPatch) -> SettingsOut:
+    """Persist runtime overrides for the editable subset. Secrets and
+    schema-coupled values stay env-only and are rejected here."""
+    try:
+        set_overrides(body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return get_settings_route()
 
 
@@ -609,7 +615,7 @@ def patch_settings(_: SettingsPatch) -> SettingsOut:
 @router.post("/landscapes/{landscape_id}/export/obsidian", response_model=ExportResult)
 def export_obsidian(landscape_id: str, body: ExportRequest, s: Session = Depends(get_session)) -> ExportResult:
     landscape, plan, root = _build_export_plan(landscape_id, s, create_root=True)
-    push = body.push if body.push is not None else get_settings().obsidian_export_auto_push
+    push = body.push if body.push is not None else effective_settings().obsidian_export_auto_push
     try:
         written, hashes, commit_sha, pushed = write_plan(
             plan,

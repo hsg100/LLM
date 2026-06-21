@@ -318,9 +318,14 @@ class SettingsOut(BaseModel):
     has_openai_key: bool
     has_deepseek_key: bool
     has_anthropic_key: bool
+    # Names of fields the PATCH endpoint will accept (the rest are env-only).
+    editable_fields: list[str] = Field(default_factory=list)
 
 
 class SettingsPatch(BaseModel):
+    llm_provider: Optional[str] = None
+    llm_model_fast: Optional[str] = None
+    llm_model_strong: Optional[str] = None
     obsidian_export_auto_push: Optional[bool] = None
     max_papers_per_landscape: Optional[int] = None
 

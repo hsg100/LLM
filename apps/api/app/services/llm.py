@@ -23,8 +23,6 @@ from typing import Any, Optional
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-from app.config import get_settings
-
 logger = logging.getLogger("fieldmap.llm")
 
 
@@ -244,7 +242,10 @@ class LLMConfigError(RuntimeError):
 
 
 def get_llm(strong: bool = False) -> LLMProvider:
-    s = get_settings()
+    # Runtime overrides (provider/model) layer over env defaults.
+    from app.runtime_settings import effective_settings
+
+    s = effective_settings()
     provider = s.llm_provider.lower()
     model = s.llm_model_strong if strong else s.llm_model_fast
     if provider == "openai" and s.openai_api_key:
