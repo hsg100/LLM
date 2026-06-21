@@ -868,6 +868,17 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 ### Sprint 3 — Discovery & ranking quality *(closes §3.2, §3.3)*
 
 > **Goal:** Multi-source discovery with real signals and quality-aware ranking.
+>
+> **Status: core implemented & verified; user-PDF deferred.** Added a
+> Semantic Scholar source (citations/influence/OA-PDF/DOI), made
+> `[arxiv, semantic_scholar]` the default, and rewrote dedupe to *merge* across
+> sources via union-find over DOI/arXiv-id/title (so citations + PDF combine
+> into one record). Ranking categories are now absolute-quality tiers with a
+> thin relative floor (no fixed must-read quota), and ranking is the **single
+> owner** of `category` (extraction no longer overwrites it). Citation counts
+> feed `Paper` and refresh on re-runs. 52 tests pass; ruff clean; CI green.
+> **Deferred:** user-PDF upload ingestion (upload API + storage/parse flow +
+> frontend) — the remaining Sprint 3 item; OpenAlex/Crossref/GitHub still later.
 
 - **`SemanticScholarSource`** (citations / influential-citation count / OA PDF)
   + **user-PDF ingestion** (upload → store → parse → candidate); cross-source
