@@ -30,6 +30,10 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://fieldmap:fieldmap@localhost:5432/fieldmap
       REDIS_URL: redis://localhost:6379/0
+      # Writable temp paths so storage/export code doesn't touch the
+      # container-only /data mount during tests.
+      PDF_STORAGE_DIR: ${{ runner.temp }}/fieldmap-pdfs
+      OBSIDIAN_EXPORT_REPO_PATH: ${{ runner.temp }}/fieldmap-obsidian
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

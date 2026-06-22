@@ -45,8 +45,16 @@ dbonly = pytest.mark.skipif(not _db_available(), reason="requires Postgres")
 
 
 @dbonly
-def test_ingest_uploaded_pdf_creates_paper_and_link():
+def test_ingest_uploaded_pdf_creates_paper_and_link(tmp_path, monkeypatch):
+    # Isolate PDF storage to a writable temp dir (the default /data isn't
+    # writable on CI runners).
+    import app.services.pdf_storage as ps
+    from app.config import Settings
+
+    monkeypatch.setattr(ps, "get_settings", lambda: Settings(pdf_storage_dir=str(tmp_path)))
+
     pdf = _make_pdf()
+    paper_id = None
     with session_scope() as s:
         ls = Landscape(topic="upload ingest test")
         s.add(ls)
@@ -82,6 +90,12 @@ def test_ingest_uploaded_pdf_creates_paper_and_link():
             ).all()
             assert len(links) == 1
     finally:
+        if paper_id is None:
+            with session_scope() as s:
+                ls = s.get(Landscape, ls_id)
+                if ls:
+                    s.delete(ls)
+            return
         with session_scope() as s:
             for model in (Chunk, PaperSection):
                 for row in s.exec(select(model).where(model.paper_id == paper_id)).all():
