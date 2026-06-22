@@ -895,6 +895,18 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 ### Sprint 4 — Synthesis, field structure & relationships *(closes §3.6, §3.7, parts of §3.3)*
 
 > **Goal:** Topic-specific maps and genuinely pedagogical reasoning.
+>
+> **Status: implemented & verified.** Synthesis now owns a per-paper
+> `paper_rationales` ("why read / why skip", grounded in extraction), persisted
+> onto `LandscapePaper.rationale` and shown in the UI — replacing ranking's
+> metric string. The prompt demands a topic-specific field-structure DAG and a
+> `field_structure_generated` flag marks LLM-authored vs the deterministic
+> fallback. Relationships are LLM-authored grounded typed edges
+> (`generate_relationships`, validated + deduped) with the heuristics demoted to
+> a labelled fallback. The landscape page shows a degraded/auto-generated-outline
+> banner (decision #9). 59 tests pass; ruff clean; next build green.
+> **Note:** the field-structure DAG still has no dedicated UI (gets graph viz in
+> Sprint 7); citation-edge seeding from S2 references is a later enhancement.
 
 - **Topic-specific field-structure DAG** (LLM-authored; deterministic spine only
   as a **labelled** fallback per decision #9).
