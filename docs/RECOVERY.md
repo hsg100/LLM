@@ -869,16 +869,18 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 
 > **Goal:** Multi-source discovery with real signals and quality-aware ranking.
 >
-> **Status: core implemented & verified; user-PDF deferred.** Added a
-> Semantic Scholar source (citations/influence/OA-PDF/DOI), made
-> `[arxiv, semantic_scholar]` the default, and rewrote dedupe to *merge* across
-> sources via union-find over DOI/arXiv-id/title (so citations + PDF combine
-> into one record). Ranking categories are now absolute-quality tiers with a
-> thin relative floor (no fixed must-read quota), and ranking is the **single
-> owner** of `category` (extraction no longer overwrites it). Citation counts
-> feed `Paper` and refresh on re-runs. 52 tests pass; ruff clean; CI green.
-> **Deferred:** user-PDF upload ingestion (upload API + storage/parse flow +
-> frontend) — the remaining Sprint 3 item; OpenAlex/Crossref/GitHub still later.
+> **Status: implemented & verified.** Added a Semantic Scholar source
+> (citations/influence/OA-PDF/DOI), made `[arxiv, semantic_scholar]` the
+> default, and rewrote dedupe to *merge* across sources via union-find over
+> DOI/arXiv-id/title (so citations + PDF combine into one record). Ranking
+> categories are now absolute-quality tiers with a thin relative floor (no fixed
+> must-read quota), and ranking is the **single owner** of `category`
+> (extraction no longer overwrites it). Citation counts feed `Paper` and refresh
+> on re-runs. **User-PDF upload ingestion** done: `POST .../papers/upload` +
+> `ingest_uploaded_pdf` (store/parse/sections/link, idempotent) + an Upload-PDF
+> control on the papers page. 55 tests pass; ruff clean; next build green.
+> **Later (unchanged from plan):** OpenAlex/Crossref/GitHub sources; uploaded
+> papers fold into extraction/synthesis on the next landscape run.
 
 - **`SemanticScholarSource`** (citations / influential-citation count / OA PDF)
   + **user-PDF ingestion** (upload → store → parse → candidate); cross-source
