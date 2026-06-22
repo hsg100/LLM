@@ -210,15 +210,24 @@ class ReadingPathStep(BaseModel):
     cluster: Optional[str] = None
 
 
+class PaperRationale(BaseModel):
+    paper_id: str
+    rationale: str  # one-sentence "why read this / why skip" for the reader
+
+
 class Synthesis(BaseModel):
     field_overview: str = ""
     why_it_matters: str = ""
     content_quality: str = "ok"
     extraction_quality: dict[str, Any] = Field(default_factory=dict)
     field_structure: FieldStructure = Field(default_factory=FieldStructure)
+    # True when the field_structure DAG was authored by the LLM; False when it
+    # fell back to the deterministic outline (frontend labels it as such).
+    field_structure_generated: bool = False
     clusters: list[ClusterOut] = Field(default_factory=list)
     must_read_paper_ids: list[str] = Field(default_factory=list)
     reading_path: list[ReadingPathStep] = Field(default_factory=list)
+    paper_rationales: list[PaperRationale] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
     datasets_benchmarks: list[str] = Field(default_factory=list)
     method_timeline: list[dict[str, Any]] = Field(default_factory=list)

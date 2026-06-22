@@ -101,6 +101,7 @@ async def synthesise(
     try:
         call = llm.complete_json(messages, model=strong_model, stage="synthesis")
         raw = await asyncio.wait_for(call, timeout=timeout_seconds) if timeout_seconds else await call
+        llm_provided_fs = bool((raw.get("field_structure") or {}).get("nodes")) if isinstance(raw, dict) else False
         try:
             synth = Synthesis.model_validate(raw)
         except ValidationError:
@@ -109,7 +110,13 @@ async def synthesise(
                 if k in raw:
                     merged[k] = raw[k]
             synth = Synthesis.model_validate(merged)
-        return _merge_with_skeleton(synth, skeleton)
+        result = _merge_with_skeleton(synth, skeleton)
+        # The DAG is "generated" only if the LLM authored it (and it survived).
+        data = result.model_dump()
+        data["field_structure_generated"] = llm_provided_fs and bool(
+            (data.get("field_structure") or {}).get("nodes")
+        )
+        return Synthesis.model_validate(data)
     except Exception:  # noqa: BLE001
         return skeleton
 
@@ -163,9 +170,11 @@ def _deterministic_skeleton(landscape_papers: list[dict[str, Any]]) -> Synthesis
             "total_extractions": len(landscape_papers),
         },
         field_structure=field_structure,
+        field_structure_generated=False,
         clusters=[],
         must_read_paper_ids=must_read_ids,
         reading_path=[],
+        paper_rationales=_deterministic_paper_rationales(landscape_papers),
         prerequisites=[k for k, _ in prereq_counter.most_common(10)],
         datasets_benchmarks=[k for k, _ in datasets_counter.most_common(15)],
         method_timeline=[],
@@ -174,6 +183,36 @@ def _deterministic_skeleton(landscape_papers: list[dict[str, Any]]) -> Synthesis
         project_ideas=[],
         skip_for_now=[p["paper_id"] for p in landscape_papers if p.get("category") == "skip-for-now"],
     )
+
+
+def _clean_field(value: Any) -> str:
+    s = str(value or "").strip()
+    return "" if s.lower() in {"", "not reported", "not reported."} else s
+
+
+def _deterministic_paper_rationales(landscape_papers: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Honest, extraction-derived 'why read / why skip' per paper.
+
+    Used without an LLM (and as backfill). The real synthesis prompt replaces
+    these with grounded one-liners.
+    """
+    out: list[dict[str, str]] = []
+    for p in landscape_papers:
+        pid = p.get("paper_id")
+        if not pid:
+            continue
+        ext = p.get("extraction") or {}
+        category = p.get("category")
+        focus = _clean_field(ext.get("contribution")) or _clean_field(ext.get("method")) or _clean_field(ext.get("problem"))
+        focus = focus[:160]
+        if category == "skip-for-now":
+            rationale = "Lower priority for this topic" + (f" — centres on {focus}" if focus else ".")
+        elif category == "must-read":
+            rationale = ("Start here: " + focus) if focus else "Central to the topic — read early."
+        else:
+            rationale = focus or "Relevant supporting work for this topic."
+        out.append({"paper_id": pid, "rationale": rationale})
+    return out
 
 
 def _merge_with_skeleton(synth: Synthesis, skel: Synthesis) -> Synthesis:

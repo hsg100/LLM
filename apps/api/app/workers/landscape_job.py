@@ -64,7 +64,7 @@ from app.services.paper_sources.stub import StubSource
 from app.services.pdf_storage import deterministic_pdf_filename, resolve_pdf_storage_path, store_pdf_bytes
 from app.services.quiz_generation import generate_quizzes_and_flashcards
 from app.services.ranking import rank_papers
-from app.services.relationships import generate_paper_relationships
+from app.services.relationships import generate_relationships
 from app.services.synthesis import synthesise
 from app.services.vectors import has_embedding, to_list
 
@@ -322,7 +322,7 @@ async def _run(job_id: str) -> None:
             else synthesis_dict.get("content_quality") or extraction_quality.get("content_quality", "ok")
         )
         synthesis_dict["extraction_quality"] = extraction_quality
-        _persist_synthesis(job_id, synthesis_dict, bundle)
+        refreshed_bundle = _persist_synthesis(job_id, synthesis_dict, bundle)
         _append_event(
             job_id,
             "synthesising",
@@ -332,7 +332,22 @@ async def _run(job_id: str) -> None:
                 "content_quality": synthesis_dict.get("content_quality"),
                 "clusters": len(synthesis_dict.get("clusters") or []),
                 "reading_path_items": len(synthesis_dict.get("reading_path") or []),
+                "field_structure_generated": synthesis_dict.get("field_structure_generated", False),
             },
+        )
+
+        # ----- 7a. Inter-paper relationships (LLM-authored; heuristic fallback) -----
+        # generate_relationships never raises — it falls back to heuristics.
+        edges, rel_method = await generate_relationships(
+            llm_strong, refreshed_bundle, timeout_seconds=settings.synthesis_timeout_seconds
+        )
+        rel_count = _persist_relationships(job_id, edges)
+        _append_event(
+            job_id,
+            "synthesising",
+            f"Relationships ready ({rel_method}): {rel_count} edges",
+            0.85,
+            meta={"relationship_method": rel_method, "relationship_edges": rel_count},
         )
 
         # ----- 7b. Concept glossary -----
@@ -947,12 +962,12 @@ def _load_landscape_bundle(job_id: str, paper_ids: dict[str, str]) -> list[dict[
     return bundle
 
 
-def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list[dict[str, Any]]) -> None:
+def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list[dict[str, Any]]) -> list[dict[str, Any]]:
     with session_scope() as s:
         landscape_id = _landscape_id_of(s, job_id)
         landscape = s.get(Landscape, landscape_id)
         if landscape is None:
-            return
+            return []
         landscape.synthesis = synthesis_dict
         s.add(landscape)
 
@@ -977,6 +992,21 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
                 select(LandscapePaper).where(LandscapePaper.landscape_id == landscape_id)
             ).all()
         }
+
+        # Synthesis owns the user-facing rationale ("why read / why skip"),
+        # replacing ranking's metric string. Resolve by paper_id (id-first).
+        for item in synthesis_dict.get("paper_rationales") or []:
+            if not isinstance(item, dict):
+                continue
+            pid = item.get("paper_id")
+            text = str(item.get("rationale") or "").strip()
+            if pid not in bundle_pids:
+                pid = title_to_pid.get(item.get("paper_id"))
+            link = links_by_pid.get(pid) if pid else None
+            if link is not None and text:
+                link.rationale = text[:500]
+                s.add(link)
+
         for ord_, c in enumerate(synthesis_dict.get("clusters") or []):
             row = Cluster(
                 landscape_id=landscape_id,
@@ -1014,10 +1044,19 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
             item["cluster_id"] = link.cluster_id if link else b.get("cluster_id")
             refreshed_bundle.append(item)
 
-        for rel in s.exec(select(PaperRelationship).where(PaperRelationship.landscape_id == landscape_id)).all():
+    # Relationships are generated as their own (async, LLM-backed) step in _run.
+    return refreshed_bundle
+
+
+def _persist_relationships(job_id: str, edges: list[dict[str, Any]]) -> int:
+    with session_scope() as s:
+        landscape_id = _landscape_id_of(s, job_id)
+        for rel in s.exec(
+            select(PaperRelationship).where(PaperRelationship.landscape_id == landscape_id)
+        ).all():
             s.delete(rel)
         s.flush()
-        for rel in generate_paper_relationships(refreshed_bundle):
+        for rel in edges:
             s.add(
                 PaperRelationship(
                     landscape_id=landscape_id,
@@ -1027,6 +1066,7 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
                     note=rel.get("rationale"),
                 )
             )
+        return len(edges)
 
 
 def _persist_concepts_for_job(job_id: str, concepts: list[dict[str, Any]]) -> int:

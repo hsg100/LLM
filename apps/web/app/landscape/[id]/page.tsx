@@ -496,6 +496,29 @@ export default async function LandscapeOverview({ params }: { params: { id: stri
         >
           <ConceptText text={overviewSummary} concepts={concepts} landscapeId={landscape.id} />
         </p>
+        {(s.content_quality === "degraded" ||
+          s.content_quality === "weakly_grounded" ||
+          !s.field_overview) && (
+          <div
+            style={{
+              marginTop: 14,
+              maxWidth: 780,
+              fontSize: 12.5,
+              lineHeight: 1.5,
+              color: "var(--warn)",
+              background: "var(--warm)",
+              border: "1px solid var(--warm-bd)",
+              borderRadius: 10,
+              padding: "9px 13px",
+            }}
+          >
+            {s.content_quality === "degraded"
+              ? "Synthesis ran in degraded mode (extraction was weak or the model was unavailable). Treat the overview and structure below as an auto-generated outline rather than a confident synthesis."
+              : !s.field_overview
+              ? "The model did not return a prose synthesis for this run — the overview and field structure below are an auto-generated outline from the ranked papers."
+              : "Some extracted notes were weakly grounded, so cross-paper claims below are lower-confidence."}
+          </div>
+        )}
       </div>
 
       <div
