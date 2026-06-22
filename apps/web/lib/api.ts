@@ -119,6 +119,24 @@ export async function cancelJob(jobId: string): Promise<Job> {
   return apiPost<Job>(`/api/jobs/${jobId}/cancel`, {});
 }
 
+export async function uploadPaper(
+  landscapeId: string,
+  file: File
+): Promise<{ paper_id: string; title: string; parsed: boolean; sections: number; error: string | null }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const r = await fetch(apiUrl(`/api/landscapes/${landscapeId}/papers/upload`), {
+    method: "POST",
+    body: fd,
+    cache: "no-store",
+  });
+  if (!r.ok) {
+    const body = await readErrorBody(r);
+    throw new Error(`Upload failed → ${r.status}${body ? ` — ${body}` : ""}`);
+  }
+  return r.json();
+}
+
 export type SettingsPatch = {
   llm_provider?: string;
   llm_model_fast?: string;

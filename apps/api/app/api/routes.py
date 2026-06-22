@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
@@ -70,6 +70,7 @@ from app.schemas import (
 from app.runtime_settings import EDITABLE_FIELDS, effective_settings, set_overrides
 from app.services.concepts import build_concept_map, concept_slug, concept_to_dict
 from app.services.pdf_storage import resolve_pdf_storage_path
+from app.services.uploads import ingest_uploaded_pdf, looks_like_pdf
 from app.users import DEFAULT_USER_ID
 from app.workers.landscape_job import job_channel, run_landscape_job
 from app.workers.queue import get_queue
@@ -160,6 +161,33 @@ def get_landscape_papers(landscape_id: str, s: Session = Depends(get_session)) -
             )
         )
     return out
+
+
+@router.post("/landscapes/{landscape_id}/papers/upload", response_model=dict)
+async def upload_landscape_paper(
+    landscape_id: str,
+    file: UploadFile = File(...),
+    s: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Upload a PDF ("bring your own paper") and attach it to the landscape.
+
+    Stored + parsed synchronously; LLM extraction/synthesis integration happens
+    on the next landscape run.
+    """
+    if s.get(Landscape, landscape_id) is None:
+        raise HTTPException(404, "landscape not found")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty file")
+    max_bytes = get_settings().max_pdf_mb * 1024 * 1024
+    if len(data) > max_bytes:
+        raise HTTPException(413, f"PDF exceeds max size {get_settings().max_pdf_mb}MB")
+    if not looks_like_pdf(data, file.filename):
+        raise HTTPException(400, "file does not look like a PDF")
+    try:
+        return ingest_uploaded_pdf(s, landscape_id, file.filename or "upload.pdf", data)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"failed to ingest PDF: {type(e).__name__}: {e}")
 
 
 @router.get("/landscapes/{landscape_id}/concepts", response_model=list[ConceptOut])

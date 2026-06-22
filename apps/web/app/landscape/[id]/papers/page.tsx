@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { apiGet, Landscape, LandscapePaper } from "../../../../lib/api";
+import { apiGet, Landscape, LandscapePaper, uploadPaper } from "../../../../lib/api";
 import {
   CATEGORY_META,
   Category,
@@ -19,6 +19,36 @@ export default function PapersPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>("score");
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState<string | null>(null);
+
+  async function reloadPapers() {
+    try {
+      const p = await apiGet<LandscapePaper[]>(`/api/landscapes/${params.id}/papers`);
+      setPapers(p);
+    } catch (e: any) {
+      setErr(e.message || String(e));
+    }
+  }
+
+  async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadMsg(null);
+    try {
+      const r = await uploadPaper(params.id, file);
+      setUploadMsg(
+        `Added “${r.title}”` + (r.parsed ? ` · ${r.sections} sections` : " · parse failed")
+      );
+      await reloadPapers();
+    } catch (err: any) {
+      setUploadMsg(err?.message || "Upload failed");
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -94,6 +124,31 @@ export default function PapersPage({ params }: { params: { id: string } }) {
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <label
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              padding: "6px 12px",
+              borderRadius: 8,
+              border: "1px solid var(--bd)",
+              background: "var(--panel)",
+              color: "var(--t2)",
+              cursor: uploading ? "default" : "pointer",
+              opacity: uploading ? 0.6 : 1,
+            }}
+          >
+            {uploading ? "Uploading…" : "Upload PDF"}
+            <input
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={onUpload}
+              disabled={uploading}
+              style={{ display: "none" }}
+            />
+          </label>
+          {uploadMsg && (
+            <span style={{ fontSize: 11.5, color: "var(--t3)", maxWidth: 240 }}>{uploadMsg}</span>
+          )}
           <span
             className="font-mono"
             style={{
