@@ -43,7 +43,7 @@ from app.models import (
     Quiz,
     SearchJob,
 )
-from app.parsers.pdf_parser import download_pdf, parse_pdf_bytes
+from app.parsers.pdf_parser import ParsedPdf, download_pdf, page_for_offset, parse_pdf_bytes
 from app.services.embeddings import (
     embedding_fallback_allowed,
     embedding_metadata,
@@ -294,7 +294,9 @@ async def _run(job_id: str) -> None:
         _raise_if_cancelled(job_id)
         _set_stage(job_id, "extracting", 0.5, "Extracting structured notes")
         llm_fast = get_llm(strong=False)
-        extraction_quality = await _extract_all(job_id, ranked, paper_ids, llm_fast)
+        extraction_quality = await _extract_all(
+            job_id, ranked, paper_ids, llm_fast, provider_is_real=_provider_is_real(llm_fast)
+        )
         if extraction_quality.get("content_quality") == "degraded":
             _append_event(
                 job_id,
@@ -658,7 +660,7 @@ async def _download_and_parse(job_id: str, ranked, paper_ids: dict[str, str]) ->
                     pdf_row.error = parsed.error
                 s.add(pdf_row)
                 if parsed.ok:
-                    _replace_sections_and_chunks(s, paper_id, parsed.sections)
+                    _replace_sections_and_chunks(s, paper_id, parsed)
             await mark_parse(
                 cand,
                 paper_id,
@@ -687,33 +689,42 @@ async def _download_and_parse(job_id: str, ranked, paper_ids: dict[str, str]) ->
     _set_stage(job_id, "parsing_pdfs", 0.48, "PDF parsing complete")
 
 
-def _replace_sections_and_chunks(s, paper_id: str, sections: list[tuple[str, str]]) -> None:  # type: ignore[no-untyped-def]
+def _replace_sections_and_chunks(s, paper_id: str, parsed: ParsedPdf) -> None:  # type: ignore[no-untyped-def]
     s.exec(delete(Chunk).where(Chunk.paper_id == paper_id))
     s.exec(delete(PaperSection).where(PaperSection.paper_id == paper_id))
+    page_spans = parsed.page_spans
     chunk_ordinal = 0
-    for section_ordinal, (heading, content) in enumerate(sections):
+    for section_ordinal, sec in enumerate(parsed.sections):
         section = PaperSection(
             paper_id=paper_id,
             ordinal=section_ordinal,
-            heading=heading,
-            page_start=None,
-            page_end=None,
-            content=content,
+            heading=sec.heading,
+            page_start=sec.page_start,
+            page_end=sec.page_end,
+            content=sec.content,
         )
         s.add(section)
         s.flush()
-        char_start = 0
-        for chunk_text, start, end in _chunk_text_with_ranges(content, target_chars=1200, overlap=120):
+        for chunk_text, start, end in _chunk_text_with_ranges(sec.content, target_chars=1200, overlap=120):
+            # Map the chunk's char range (relative to the section content) back
+            # to a document offset, then to a 1-based PDF page. Falls back to the
+            # section's page range when no page map is available.
+            page_start = page_for_offset(page_spans, sec.doc_offset + start) if page_spans else sec.page_start
+            page_end = (
+                page_for_offset(page_spans, sec.doc_offset + max(start, end - 1))
+                if page_spans
+                else sec.page_end
+            )
             s.add(
                 Chunk(
                     paper_id=paper_id,
                     section_id=section.id,
                     ordinal=chunk_ordinal,
-                    section_heading=heading,
-                    page_start=None,
-                    page_end=None,
-                    char_start=char_start + start,
-                    char_end=char_start + end,
+                    section_heading=sec.heading,
+                    page_start=page_start,
+                    page_end=page_end,
+                    char_start=start,
+                    char_end=end,
                     content=chunk_text,
                 )
             )
@@ -746,6 +757,8 @@ async def _extract_all(
     ranked,  # type: ignore[no-untyped-def]
     paper_ids: dict[str, str],
     llm,  # type: ignore[no-untyped-def]
+    *,
+    provider_is_real: bool = True,
 ) -> dict[str, Any]:
     total = len(ranked)
     sem = asyncio.Semaphore(3)
@@ -768,7 +781,7 @@ async def _extract_all(
             # Cached?
             with session_scope() as s:
                 row = s.exec(select(Extraction).where(Extraction.paper_id == paper_id)).first()
-                if row is not None and not _extraction_needs_refresh(row.data):
+                if row is not None and not _extraction_needs_refresh(row.data, provider_is_real=provider_is_real):
                     async with stats_lock:
                         stats["total"] += 1
                         grounding = ((row.data or {}).get("_fieldmap") or {}).get("grounding") or {}
@@ -877,6 +890,15 @@ async def _extract_all(
     }
 
 
+def _provider_is_real(llm) -> bool:  # type: ignore[no-untyped-def]
+    """True when a real (non-stub) LLM is configured.
+
+    A real provider means previously-degraded/stub extractions are worth
+    re-running; the deterministic dev StubLLM is not.
+    """
+    return getattr(llm, "name", "") != "stub"
+
+
 def _extraction_is_degraded(data: dict[str, Any]) -> bool:
     meta = (data or {}).get("_fieldmap") or {}
     if meta:
@@ -884,13 +906,36 @@ def _extraction_is_degraded(data: dict[str, Any]) -> bool:
     return _is_low_signal_extraction(data)
 
 
-def _extraction_needs_refresh(data: dict[str, Any]) -> bool:
-    meta = (data or {}).get("_fieldmap") or {}
-    if meta.get("degraded"):
+def _extraction_needs_refresh(data: dict[str, Any], *, provider_is_real: bool = True) -> bool:
+    """Decide whether a cached extraction should be re-run.
+
+    Explicit cases, first match wins:
+
+    1. No data at all                                  → refresh (nothing cached).
+    2. No ``_fieldmap`` meta (legacy / pre-grounding)  → refresh (re-extract under
+       the current grounding-aware pipeline).
+    3. Grounding diagnostics missing from meta         → refresh (incomplete run).
+    4. Degraded extraction:
+         - a real provider is now configured           → refresh — this is the
+           stub→real (or transient-failure→real) invalidation the spec requires.
+         - still on the stub / no real provider         → keep — re-running can't
+           improve it and would churn every landscape run.
+    5. Healthy but low-signal extraction + real provider → refresh (squeeze more
+       out of the paper now that a capable model is available).
+    6. Otherwise                                        → keep the cached result.
+    """
+    if not data:
+        return True
+    meta = data.get("_fieldmap") or {}
+    if not meta:
         return True
     if "grounding" not in meta:
         return True
-    return not meta and _is_low_signal_extraction(data)
+    if meta.get("degraded"):
+        return provider_is_real
+    if provider_is_real and _is_low_signal_extraction(data):
+        return True
+    return False
 
 
 def _is_low_signal_extraction(data: dict[str, Any]) -> bool:

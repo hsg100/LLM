@@ -922,6 +922,30 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 ### Sprint 5 — Grounding depth & extraction correctness *(closes §3.4, §3.5)*
 
 > **Goal:** Trustworthy, page-level source grounding.
+>
+> **Status: implemented & verified.** PDF parsing is now **page-aware**: the
+> parser renders pages individually (`page_chunks=True`), assembles one markdown
+> document while recording a per-page char-span map (`ParsedPdf.page_spans`), and
+> emits `ParsedSection`s carrying `page_start/page_end` + the content's absolute
+> `doc_offset`. The worker's `_replace_sections_and_chunks` maps each derived
+> chunk's char-range back through the page map to a 1-based PDF page, so
+> `page_start/page_end` are populated on both `paper_sections` and `chunks`
+> (previously always `None`). The existing grounding chain already threads
+> `chunk.page_start` → extraction context → `validate_grounding` → the export
+> renderer; with real pages flowing it now cites "section · page N · chunk N".
+> Added a **Source grounding** card to the paper-detail UI showing field →
+> section · page · chunk + quote + confidence. The extraction-refresh predicate
+> (`_extraction_needs_refresh`) was rewritten with explicit, tested cases and now
+> takes `provider_is_real`: degraded extractions are invalidated (re-extracted)
+> when a real LLM is configured but kept under the dev stub (no pointless churn);
+> low-signal healthy extractions also refresh only under a real provider.
+> Chunking was already consolidated on the worker's range-aware
+> `_chunk_text_with_ranges` in Sprint 0 (verified — the parser no longer chunks).
+> 74 tests pass (incl. a DB-backed chunk→page persistence test); ruff clean;
+> migrations drift-clean (page columns already existed — no migration needed);
+> `next build` green.
+> **Deferred (unchanged from plan):** figure/table extraction (§3.4) remains a
+> later enhancement.
 
 - **Page-aware PDF parsing** → populate `page_start/page_end` on sections/chunks;
   thread pages through grounding → paper UI → export.
