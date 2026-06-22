@@ -91,8 +91,7 @@ async def rank_papers(
     )
     selected = [rows[i] for i in selected_idx]
 
-    # 4) Bucket categories by score quantile.
-    scores = [s for *_x, s, _c in [(c, e, s, comps) for c, e, s, comps in selected]]  # noqa
+    # 4) Bucket categories by absolute quality (with a small relative floor).
     scores = [r[2] for r in selected]
     cats = _bucket_categories(scores)
 
@@ -141,28 +140,53 @@ def _kw_boost(cand: PaperCandidate, keywords: Iterable[str], amount: float) -> f
     return amount if any(kw in text for kw in keywords) else 0.0
 
 
+# Absolute thresholds on the composite [0,1] score. Categories reflect genuine
+# quality: a weak result set won't be forced to yield "must-read" papers, and a
+# strong set isn't capped at a fixed quota.
+_MUST_ABS = 0.60
+_USEFUL_ABS = 0.48
+_OPTIONAL_ABS = 0.35
+
+_TIER_ORDER = ["skip-for-now", "optional", "useful", "must-read"]
+
+
+def _abs_tier(score: float) -> str:
+    if score >= _MUST_ABS:
+        return "must-read"
+    if score >= _USEFUL_ABS:
+        return "useful"
+    if score >= _OPTIONAL_ABS:
+        return "optional"
+    return "skip-for-now"
+
+
+def _best_tier(a: str, b: str) -> str:
+    return a if _TIER_ORDER.index(a) >= _TIER_ORDER.index(b) else b
+
+
 def _bucket_categories(scores: list[float]) -> list[str]:
+    """Absolute-quality tiers plus a thin relative floor.
+
+    Absolute thresholds decide the tier, so categories track real quality. A
+    relative floor guarantees the UI always has an entry point: the single
+    top-ranked paper is at least 'must-read' and the top ~10% are at least
+    'useful' even if the whole set scores modestly.
+    """
     if not scores:
         return []
-    s_sorted = sorted(scores, reverse=True)
-    n = len(s_sorted)
-    if n == 0:
-        return []
-    cuts = {
-        "must": s_sorted[max(0, int(n * 0.15) - 1)],
-        "useful": s_sorted[max(0, int(n * 0.45) - 1)],
-        "optional": s_sorted[max(0, int(n * 0.80) - 1)],
-    }
+    n = len(scores)
+    order = sorted(range(n), key=lambda i: scores[i], reverse=True)
+    rank_of = {i: r for r, i in enumerate(order)}
+    top_useful_cutoff = max(1, int(n * 0.10))
     cats: list[str] = []
-    for s in scores:
-        if s >= cuts["must"]:
-            cats.append("must-read")
-        elif s >= cuts["useful"]:
-            cats.append("useful")
-        elif s >= cuts["optional"]:
-            cats.append("optional")
-        else:
-            cats.append("skip-for-now")
+    for i, s in enumerate(scores):
+        tier = _abs_tier(s)
+        rank = rank_of[i]
+        if rank == 0:
+            tier = _best_tier(tier, "must-read")
+        elif rank < top_useful_cutoff:
+            tier = _best_tier(tier, "useful")
+        cats.append(tier)
     return cats
 
 

@@ -88,6 +88,67 @@ export async function apiPost<T>(path: string, body: any, init?: RequestInit, ti
   return r.json() as Promise<T>;
 }
 
+export async function apiPatch<T>(path: string, body: any, init?: RequestInit, timeoutMs?: number): Promise<T> {
+  let r: Response;
+  const timeout = timeoutSignal(init, timeoutMs);
+  try {
+    r = await fetch(apiUrl(path), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      ...init,
+      signal: timeout.signal,
+    });
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new Error(`PATCH ${path} → timed out after ${timeoutMs || DEFAULT_TIMEOUT_MS}ms`);
+    }
+    throw new Error(`PATCH ${path} → network error: ${e?.message || e}`);
+  } finally {
+    timeout.cleanup();
+  }
+  if (!r.ok) {
+    const errBody = await readErrorBody(r);
+    throw new Error(`PATCH ${path} → ${r.status}${errBody ? ` — ${errBody}` : ""}`);
+  }
+  return r.json() as Promise<T>;
+}
+
+export async function cancelJob(jobId: string): Promise<Job> {
+  return apiPost<Job>(`/api/jobs/${jobId}/cancel`, {});
+}
+
+export async function uploadPaper(
+  landscapeId: string,
+  file: File
+): Promise<{ paper_id: string; title: string; parsed: boolean; sections: number; error: string | null }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const r = await fetch(apiUrl(`/api/landscapes/${landscapeId}/papers/upload`), {
+    method: "POST",
+    body: fd,
+    cache: "no-store",
+  });
+  if (!r.ok) {
+    const body = await readErrorBody(r);
+    throw new Error(`Upload failed → ${r.status}${body ? ` — ${body}` : ""}`);
+  }
+  return r.json();
+}
+
+export type SettingsPatch = {
+  llm_provider?: string;
+  llm_model_fast?: string;
+  llm_model_strong?: string;
+  max_papers_per_landscape?: number;
+  obsidian_export_auto_push?: boolean;
+};
+
+export async function updateSettings(patch: SettingsPatch): Promise<any> {
+  return apiPatch<any>("/api/settings", patch);
+}
+
 // ---------------- Shared types (frontend mirror of backend Pydantic) ---
 export type Paper = {
   id: string;
@@ -135,6 +196,7 @@ export type Job = {
   landscape_id: string;
   stage: string;
   progress: number;
+  cancel_requested?: boolean;
   events: JobEvent[];
   error: string | null;
   started_at: string | null;

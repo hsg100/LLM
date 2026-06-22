@@ -1,4 +1,5 @@
 import { apiGet } from "../../lib/api";
+import SettingsForm from "../../components/settings/SettingsForm";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,7 @@ type Settings = {
   has_openai_key: boolean;
   has_deepseek_key: boolean;
   has_anthropic_key: boolean;
+  editable_fields?: string[];
 };
 
 type Embed = {
@@ -85,9 +87,21 @@ export default async function SettingsPage() {
         Settings &amp; readiness
       </h1>
       <p style={{ fontSize: 13, color: "var(--t3)", margin: "0 0 24px" }}>
-        Runtime view of providers and the pipeline. Configuration lives in{" "}
+        Runtime view of providers and the pipeline. Editable settings save below;
+        secrets and embedding config live in{" "}
         <span className="font-mono" style={{ color: "var(--t2)" }}>.env</span>.
       </p>
+
+      <SettingsForm
+        initial={{
+          llm_provider: s.llm_provider,
+          llm_model_fast: s.llm_model_fast,
+          llm_model_strong: s.llm_model_strong,
+          max_papers_per_landscape: s.max_papers_per_landscape,
+          obsidian_export_auto_push: s.obsidian_export_auto_push,
+          editable_fields: s.editable_fields ?? [],
+        }}
+      />
 
       <div
         style={{

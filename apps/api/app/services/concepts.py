@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 
 from slugify import slugify
 from sqlmodel import Session, select

@@ -569,32 +569,6 @@ def _section_rank(heading: Optional[str], priority: list[str]) -> int:
     return 100
 
 
-def _join_sections(sections: list[tuple[Optional[str], str]], max_chars: int) -> str:
-    chunks: list[str] = []
-    remaining = max_chars
-    remaining_sections = len(sections)
-    for heading, content in sections:
-        if remaining <= 0:
-            break
-        remaining_sections = max(1, remaining_sections)
-        header = f"\n\n## {heading.strip()}\n" if (heading or "").strip() else "\n\n"
-        body_budget = max(0, (remaining // remaining_sections) - len(header))
-        if body_budget <= 0:
-            break
-        body = content[:body_budget].strip()
-        if not body:
-            remaining_sections -= 1
-            continue
-        chunk = f"{header}{body}"
-        chunks.append(chunk)
-        remaining -= len(chunk)
-        remaining_sections -= 1
-    text = "".join(chunks).strip()
-    if remaining <= 0:
-        text += "\n\n[... truncated for length ...]"
-    return text
-
-
 def _is_drop_heading(heading: Optional[str]) -> bool:
     return bool(_DROP_SECTION_RE.search(_normalize_heading(heading)))
 

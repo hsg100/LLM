@@ -1,7 +1,7 @@
 """SQLModel tables for FieldMap.
 
 Embedding columns use pgvector with a fixed dimension matching
-``Settings.embedding_dim`` (1536 by default). All flexible/optional
+``Settings.embedding_dim`` (384 by default, for local bge-small). All flexible/optional
 LLM output is stored in JSONB so the schema does not break when
 prompts evolve.
 """
@@ -13,9 +13,20 @@ from datetime import datetime
 from typing import Any, Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, DateTime, Float, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    Identity,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Field, Relationship, SQLModel
+from sqlmodel import Field, SQLModel
 
 from app.config import get_settings
 
@@ -54,7 +65,8 @@ class Landscape(SQLModel, table=True):
     topic: str = Field(sa_column=Column(Text, nullable=False))
     settings: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}"))
     synthesis: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}"))
-    status: str = Field(default="pending", index=True)
+    # See app.pipeline.LandscapeStatus for the canonical values.
+    status: str = Field(default="queued", index=True)
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(
         sa_column=Column(DateTime, default=_now, onupdate=_now, nullable=False)
@@ -69,12 +81,42 @@ class SearchJob(SQLModel, table=True):
 
     id: str = Field(default_factory=_uuid, primary_key=True)
     landscape_id: str = Field(foreign_key="landscapes.id", index=True)
+    # See app.pipeline.JobStage for the canonical values.
     stage: str = Field(default="queued", index=True)
     progress: float = Field(default=0.0)
-    events: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSONB, nullable=False, server_default="[]"))
+    # Cooperative cancellation flag; the worker checks it at stage boundaries.
+    cancel_requested: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
     error: Optional[str] = Field(default=None, sa_column=Column(Text))
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=_now)
+
+
+class JobEvent(SQLModel, table=True):
+    """Append-only progress events for a SearchJob.
+
+    Replaces the prior JSONB list on ``SearchJob.events`` (which was rewritten
+    in full on every append, racing under concurrent pipeline tasks). One row
+    per event; ``seq`` is a DB-assigned monotonic identity used both for stable
+    ordering and as the SSE cursor.
+    """
+
+    __tablename__ = "job_events"
+    __table_args__ = (
+        Index("ix_job_events_job_seq", "job_id", "seq"),
+    )
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    job_id: str = Field(foreign_key="search_jobs.id", index=True)
+    seq: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, Identity(always=False), nullable=False, unique=True, index=True),
+    )
+    ts: datetime = Field(default_factory=_now)
+    stage: str = Field(index=True)
+    message: str = Field(sa_column=Column(Text))
+    progress: float = Field(default=0.0)
+    meta: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}"))
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -297,6 +339,23 @@ class ReviewAttempt(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 # Exports
 # ---------------------------------------------------------------------------
+class RuntimeSettings(SQLModel, table=True):
+    """Single-row store of runtime-editable setting overrides.
+
+    A JSONB ``overrides`` map (setting name -> value) layered on top of the
+    env-based defaults by app.runtime_settings.effective_settings(). Secrets and
+    schema-coupled values (DB/Redis URLs, embedding dim) stay env-only.
+    """
+
+    __tablename__ = "runtime_settings"
+
+    id: str = Field(default="singleton", primary_key=True)
+    overrides: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}"))
+    updated_at: datetime = Field(
+        sa_column=Column(DateTime, default=_now, onupdate=_now, nullable=False)
+    )
+
+
 class ObsidianExport(SQLModel, table=True):
     __tablename__ = "obsidian_exports"
 

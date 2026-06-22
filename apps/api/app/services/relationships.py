@@ -1,10 +1,19 @@
-"""Deterministic inter-paper relationship generation."""
+"""Inter-paper relationship generation.
+
+Primary path is LLM-authored, extraction-grounded typed edges; the deterministic
+heuristics remain as a labelled fallback when no LLM is configured or the call
+fails/returns nothing.
+"""
 
 from __future__ import annotations
 
+import asyncio
+import json
 import re
 from collections import defaultdict
-from typing import Any
+from typing import Any, Optional
+
+from app.services.llm import LLMProvider
 
 
 ALLOWED_RELATIONSHIP_TYPES = {
@@ -19,6 +28,99 @@ ALLOWED_RELATIONSHIP_TYPES = {
     "survey_of",
     "related",
 }
+
+
+async def generate_relationships(
+    llm: LLMProvider,
+    landscape_papers: list[dict[str, Any]],
+    *,
+    timeout_seconds: Optional[int] = None,
+) -> tuple[list[dict[str, str]], str]:
+    """Return (edges, method) where method is 'llm' or 'heuristic'.
+
+    Tries an LLM pass grounded in the extractions; falls back to the
+    deterministic generator when there's no real LLM, the call fails, or it
+    yields nothing.
+    """
+    papers = [p for p in landscape_papers if p.get("paper_id")]
+    if len(papers) < 2 or getattr(llm, "name", "") == "stub":
+        return generate_paper_relationships(papers), "heuristic"
+    try:
+        edges = await _llm_relationships(llm, papers, timeout_seconds=timeout_seconds)
+        if edges:
+            return edges, "llm"
+    except Exception:  # noqa: BLE001
+        pass
+    return generate_paper_relationships(papers), "heuristic"
+
+
+async def _llm_relationships(
+    llm: LLMProvider,
+    papers: list[dict[str, Any]],
+    *,
+    timeout_seconds: Optional[int] = None,
+) -> list[dict[str, str]]:
+    by_id = {p["paper_id"]: p for p in papers}
+    compact = []
+    for p in papers[:40]:
+        ext = p.get("extraction") or {}
+        compact.append(
+            {
+                "paper_id": p["paper_id"],
+                "title": p.get("title"),
+                "method": ext.get("method"),
+                "contribution": ext.get("contribution"),
+                "novelty": ext.get("novelty"),
+                "limitations": (ext.get("limitations") or [])[:3],
+                "datasets": ext.get("datasets") or [],
+                "benchmarks": ext.get("benchmarks") or [],
+                "baselines": ext.get("baselines") or [],
+            }
+        )
+    prompt = {
+        "papers": compact,
+        "allowed_types": sorted(ALLOWED_RELATIONSHIP_TYPES),
+        "instructions": (
+            "Identify directed relationships BETWEEN the papers above, grounded ONLY in "
+            "the provided notes. Use the exact paper_id values. Each edge must be "
+            "{source_paper_id, target_paper_id, type, rationale}, where type is one of "
+            "allowed_types and rationale is one sentence justified by the notes. Do not "
+            "invent relationships you cannot justify. Prefer specific types (extends, "
+            "improves, contradicts, critiques, uses_same_benchmark, baseline_for, "
+            "introduces_dataset, introduces_metric, survey_of) over 'related'. "
+            'Return ONLY JSON: {"edges": [...]}.'
+        ),
+    }
+    call = llm.complete_json(
+        [
+            {"role": "system", "content": "You map relationships between research papers. Output valid JSON only."},
+            {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+        ],
+        max_tokens=4000,
+        stage="relationships",
+    )
+    raw = await asyncio.wait_for(call, timeout=timeout_seconds) if timeout_seconds else await call
+    items = raw.get("edges") if isinstance(raw, dict) else None
+    if not isinstance(items, list):
+        return []
+
+    out: dict[tuple[str, str, str], dict[str, str]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        src = item.get("source_paper_id")
+        dst = item.get("target_paper_id")
+        if not src or not dst or src == dst or src not in by_id or dst not in by_id:
+            continue
+        kind = str(item.get("type") or "related")
+        if kind not in ALLOWED_RELATIONSHIP_TYPES:
+            kind = "related"
+        rationale = str(item.get("rationale") or "").strip()[:500]
+        out.setdefault(
+            (src, dst, kind),
+            {"source_paper_id": src, "target_paper_id": dst, "type": kind, "rationale": rationale},
+        )
+    return [out[k] for k in sorted(out)]
 
 
 def generate_paper_relationships(landscape_papers: list[dict[str, Any]]) -> list[dict[str, str]]:

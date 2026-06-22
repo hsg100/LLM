@@ -2,9 +2,9 @@
 
 import { Quiz } from "../../lib/api";
 
-// The interior of the quiz screen — used both inside the desktop
-// PhoneFrame mock and as the standalone mobile page. Stateless: the
-// parent screen owns the question index, picked answer, etc.
+// The interior of the quiz screen — rendered responsively on desktop and
+// mobile. Stateless: the parent screen owns the question index, picked
+// answer, etc.
 
 export type QuizInteriorProps = {
   topic: string;

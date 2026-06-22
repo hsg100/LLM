@@ -6,7 +6,7 @@ import logging
 
 from rq import Worker
 
-from app.db import init_db
+from app.db import wait_for_schema
 from app.workers.queue import get_queue, get_redis, wait_for_redis
 
 
@@ -20,8 +20,8 @@ logger = logging.getLogger("fieldmap.worker")
 def main() -> None:
     logger.info("worker: waiting for redis…")
     wait_for_redis()
-    logger.info("worker: initializing db…")
-    init_db()
+    logger.info("worker: waiting for db schema…")
+    wait_for_schema()
     queue = get_queue()
     logger.info("worker: ready, listening on queue '%s'", queue.name)
     worker = Worker([queue], connection=get_redis())

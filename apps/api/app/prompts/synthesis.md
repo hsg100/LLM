@@ -60,6 +60,9 @@ path that respects prerequisites and starts with must-read or survey papers.
       "cluster": "string"
     }
   ],
+  "paper_rationales": [
+    {"paper_id": "string", "rationale": "string"}
+  ],
   "prerequisites": ["string"],
   "datasets_benchmarks": ["string"],
   "method_timeline": [{"year": 0, "paper_id": "string", "milestone": "string"}],
@@ -72,7 +75,15 @@ path that respects prerequisites and starts with must-read or survey papers.
 
 For `field_structure`, produce a compact DAG of the field's intellectual
 structure rather than a paper citation graph. Use stable kebab-case node IDs.
-Only include edges supported by the extracted notes.
+Only include edges supported by the extracted notes. Make it specific to THIS
+topic (real concepts/methods/benchmarks from the notes), not a generic
+foundation→methods→evaluation skeleton.
+
+For `paper_rationales`, include EVERY paper from the notes (use the exact
+paper_id). Give a single grounded sentence telling the reader why this paper is
+worth reading now — or, for weak/peripheral papers, why it is safe to skip.
+Base it on the paper's extracted contribution/method/limitations, not on generic
+praise.
 
 ## Per-paper notes
 {{papers_json}}

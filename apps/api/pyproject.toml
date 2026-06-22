@@ -5,10 +5,13 @@ description = "FieldMap backend"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
+  "python-multipart>=0.0.9",
   "uvicorn[standard]>=0.30",
   "sqlmodel>=0.0.22",
+  "alembic>=1.13",
   "psycopg[binary]>=3.2",
   "pgvector>=0.3",
+  "fastembed>=0.3",
   "pydantic>=2.8",
   "pydantic-settings>=2.4",
   "httpx>=0.27",
@@ -34,3 +37,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.ruff]
+# Generated Alembic revisions are machine-written; don't lint them.
+extend-exclude = ["migrations/versions"]

@@ -25,7 +25,6 @@ class ParsedPdf:
     ok: bool
     markdown: str = ""
     sections: list[tuple[str, str]] = field(default_factory=list)  # (heading, content)
-    chunks: list[str] = field(default_factory=list)
     bytes_: int = 0
     error: Optional[str] = None
 
@@ -73,9 +72,10 @@ def parse_pdf_bytes(data: bytes) -> ParsedPdf:
     except Exception as e:  # noqa: BLE001
         return ParsedPdf(ok=False, bytes_=len(data), error=f"parse failed: {e!s}")
 
+    # Chunking is owned by the worker (range-aware _chunk_text_with_ranges);
+    # we only return sections + raw markdown here.
     sections = _split_sections(md)
-    chunks = _chunk_markdown(md, target_chars=1200, overlap=120)
-    return ParsedPdf(ok=True, markdown=md, sections=sections, chunks=chunks, bytes_=len(data))
+    return ParsedPdf(ok=True, markdown=md, sections=sections, bytes_=len(data))
 
 
 def _split_sections(md: str) -> list[tuple[str, str]]:
@@ -94,26 +94,3 @@ def _split_sections(md: str) -> list[tuple[str, str]]:
     return sections
 
 
-def _chunk_markdown(md: str, target_chars: int, overlap: int) -> list[str]:
-    """Cheap character-window chunking. Splits at paragraph breaks when possible."""
-    if not md.strip():
-        return []
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", md) if p.strip()]
-    chunks: list[str] = []
-    buf = ""
-    for para in paragraphs:
-        if len(buf) + len(para) + 2 <= target_chars:
-            buf = f"{buf}\n\n{para}" if buf else para
-        else:
-            if buf:
-                chunks.append(buf)
-            if len(para) > target_chars:
-                # Hard split a long paragraph.
-                for i in range(0, len(para), target_chars - overlap):
-                    chunks.append(para[i : i + target_chars])
-                buf = ""
-            else:
-                buf = para
-    if buf:
-        chunks.append(buf)
-    return chunks

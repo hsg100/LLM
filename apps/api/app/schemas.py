@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 class LandscapeCreate(BaseModel):
     topic: str = Field(min_length=2, max_length=500)
     max_papers: Optional[int] = None
-    sources: list[str] = Field(default_factory=lambda: ["arxiv"])
+    sources: list[str] = Field(default_factory=lambda: ["arxiv", "semantic_scholar"])
     parse_pdfs: bool = True
     settings: dict[str, Any] = Field(default_factory=dict)
 
@@ -47,6 +47,7 @@ class JobOut(BaseModel):
     landscape_id: str
     stage: str
     progress: float
+    cancel_requested: bool = False
     events: list[JobEvent]
     error: Optional[str] = None
     started_at: Optional[datetime] = None
@@ -209,15 +210,24 @@ class ReadingPathStep(BaseModel):
     cluster: Optional[str] = None
 
 
+class PaperRationale(BaseModel):
+    paper_id: str
+    rationale: str  # one-sentence "why read this / why skip" for the reader
+
+
 class Synthesis(BaseModel):
     field_overview: str = ""
     why_it_matters: str = ""
     content_quality: str = "ok"
     extraction_quality: dict[str, Any] = Field(default_factory=dict)
     field_structure: FieldStructure = Field(default_factory=FieldStructure)
+    # True when the field_structure DAG was authored by the LLM; False when it
+    # fell back to the deterministic outline (frontend labels it as such).
+    field_structure_generated: bool = False
     clusters: list[ClusterOut] = Field(default_factory=list)
     must_read_paper_ids: list[str] = Field(default_factory=list)
     reading_path: list[ReadingPathStep] = Field(default_factory=list)
+    paper_rationales: list[PaperRationale] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
     datasets_benchmarks: list[str] = Field(default_factory=list)
     method_timeline: list[dict[str, Any]] = Field(default_factory=list)
@@ -317,9 +327,14 @@ class SettingsOut(BaseModel):
     has_openai_key: bool
     has_deepseek_key: bool
     has_anthropic_key: bool
+    # Names of fields the PATCH endpoint will accept (the rest are env-only).
+    editable_fields: list[str] = Field(default_factory=list)
 
 
 class SettingsPatch(BaseModel):
+    llm_provider: Optional[str] = None
+    llm_model_fast: Optional[str] = None
+    llm_model_strong: Optional[str] = None
     obsidian_export_auto_push: Optional[bool] = None
     max_papers_per_landscape: Optional[int] = None
 
