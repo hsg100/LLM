@@ -223,6 +223,63 @@ export type Flashcard = {
   kind: string;
 };
 
+// ---- Active recall: review loop (FSRS) ----
+export type ReviewRating = 1 | 2 | 3 | 4; // Again / Hard / Good / Easy
+
+export type ReviewQueueItem = {
+  item_kind: "quiz" | "flashcard";
+  item_id: string;
+  due: string | null;
+  state: string;
+  reps: number;
+  lapses: number;
+  quiz: Quiz | null;
+  flashcard: Flashcard | null;
+};
+
+export type ReviewQueue = {
+  now: string;
+  due_count: number;
+  new_count: number;
+  items: ReviewQueueItem[];
+};
+
+export type ReviewResult = {
+  item_kind: string;
+  item_id: string;
+  rating: number;
+  correct: boolean | null;
+  interval_days: number;
+  due: string | null;
+  state: string;
+  reps: number;
+  lapses: number;
+  stability: number | null;
+  difficulty: number | null;
+};
+
+export type WeakArea = {
+  concept: string;
+  attempts: number;
+  correct: number;
+  accuracy: number;
+};
+
+export async function getReviewQueue(landscapeId: string, limit = 40): Promise<ReviewQueue> {
+  return apiGet<ReviewQueue>(`/api/landscapes/${landscapeId}/review/queue?limit=${limit}`);
+}
+
+export async function getWeakAreas(landscapeId: string): Promise<WeakArea[]> {
+  return apiGet<WeakArea[]>(`/api/landscapes/${landscapeId}/review/weak-areas`);
+}
+
+export async function submitReview(
+  landscapeId: string,
+  body: { item_kind: "quiz" | "flashcard"; item_id: string; rating: ReviewRating; correct?: boolean }
+): Promise<ReviewResult> {
+  return apiPost<ReviewResult>(`/api/landscapes/${landscapeId}/review`, body);
+}
+
 export type PaperDetail = {
   paper: Paper;
   extraction: Record<string, any> | null;

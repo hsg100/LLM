@@ -268,6 +268,24 @@ export default async function LandscapeOverview({ params }: { params: { id: stri
                 </Link>
               )}
             </div>
+            <Link
+              href={`/landscape/${landscape.id}/review`}
+              style={{
+                display: "block",
+                textAlign: "center",
+                marginTop: 10,
+                padding: "12px 0",
+                borderRadius: 13,
+                background: "var(--accent-bg)",
+                border: "1px solid var(--accent-bd, var(--bd))",
+                color: "var(--accent-ink)",
+                fontSize: 13,
+                fontWeight: 600,
+                textDecoration: "none",
+              }}
+            >
+              Start spaced review (FSRS) →
+            </Link>
           </section>
         )}
 

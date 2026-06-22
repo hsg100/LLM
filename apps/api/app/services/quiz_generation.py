@@ -81,7 +81,7 @@ def _sanitize_flashcards(items: list[Any]) -> list[dict[str, Any]]:
         if not front or not back:
             continue
         kind = (it.get("kind") or "recall").strip().lower()
-        if kind not in {"recall", "explain", "cloze"}:
+        if kind not in {"recall", "explain", "cloze", "compare"}:
             kind = "recall"
         out.append(
             {
@@ -168,6 +168,23 @@ def _fallback_quizzes_and_flashcards(
                 }
             )
 
+        # Explain-before-reveal: prompt the learner to reconstruct the idea, then
+        # reveal the grounded answer.
+        explain_answer = method or _clean_answer(ext.get("contribution")) or problem
+        if explain_answer:
+            flashcards.append(
+                {
+                    "front": (
+                        f"Explain in your own words how '{title}' approaches its "
+                        "problem, then reveal to check."
+                    ),
+                    "back": explain_answer,
+                    "paper_id": paper_id,
+                    "concept": "explanation",
+                    "kind": "explain",
+                }
+            )
+
         if method and len(titles) >= 2:
             distractors = [x for x in titles if x != title][:3]
             options = [title, *distractors]
@@ -197,7 +214,27 @@ def _fallback_quizzes_and_flashcards(
                 }
             )
 
-    return quizzes[:10], flashcards[:12]
+        # Paper-comparison: distinguish papers by their core contribution.
+        contribution = _clean_answer(ext.get("contribution"))
+        if contribution and len(titles) >= 2:
+            distractors = [x for x in titles if x != title][:3]
+            options = [title, *distractors]
+            quizzes.append(
+                {
+                    "question": (
+                        "Compared with the other papers, which one's main "
+                        f"contribution is: {contribution[:200]}"
+                    ),
+                    "options": options,
+                    "correct_index": 0,
+                    "explanation": f"This contribution is what sets '{title}' apart.",
+                    "paper_id": paper_id,
+                    "concept": "contribution comparison",
+                    "difficulty": _clamp_int(ext.get("difficulty_level"), 1, 5, 3),
+                }
+            )
+
+    return quizzes[:12], flashcards[:16]
 
 
 def _clean_answer(value: Any) -> str:

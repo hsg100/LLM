@@ -11,9 +11,13 @@ Topic: **{{topic}}**
 Generate active-recall study material:
 - 10–20 **MCQs** that test understanding (not trivia like author names).
   Each question must have 4 options, exactly one correct answer, and a brief
-  explanation grounded in the source notes.
-- 10–20 **flashcards**, atomic (one concept each). Prefer "what / why / how"
-  style and "explain in 1 sentence" prompts over rote facts.
+  explanation grounded in the source notes. Include some **paper-comparison**
+  questions (which paper a given method/contribution/limitation belongs to).
+- 10–20 **flashcards**, atomic (one concept each). Mix the kinds:
+  - `recall` — "what / why / how" prompts.
+  - `explain` — **explain-before-reveal**: ask the learner to reconstruct an
+    idea in their own words; the `back` is the grounded answer to check against.
+  - `compare` — contrast two papers (how does A differ from B?).
 
 Distractors should be plausible but clearly wrong on close reading.
 
@@ -37,7 +41,7 @@ Distractors should be plausible but clearly wrong on close reading.
       "back": "string",
       "paper_id": "string|null",
       "concept": "string",
-      "kind": "recall|explain|cloze"
+      "kind": "recall|explain|cloze|compare"
     }
   ]
 }

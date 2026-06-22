@@ -328,12 +328,40 @@ class ReviewAttempt(SQLModel, table=True):
     __tablename__ = "review_attempts"
 
     id: str = Field(default_factory=_uuid, primary_key=True)
+    user_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True)
     landscape_id: str = Field(foreign_key="landscapes.id", index=True)
     item_kind: str  # quiz / flashcard
     item_id: str = Field(index=True)
     correct: Optional[bool] = None
-    rating: Optional[int] = None  # 0-5 (SM-2 style, optional)
+    rating: Optional[int] = None  # FSRS grade 1-4 (Again/Hard/Good/Easy)
     created_at: datetime = Field(default_factory=_now)
+
+
+class ReviewState(SQLModel, table=True):
+    """Per-item FSRS scheduling state (one row per user × item)."""
+
+    __tablename__ = "review_states"
+    __table_args__ = (
+        UniqueConstraint("user_id", "item_kind", "item_id", name="uq_review_state"),
+        Index("ix_review_state_due", "user_id", "due"),
+    )
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    user_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True)
+    landscape_id: str = Field(foreign_key="landscapes.id", index=True)
+    item_kind: str  # quiz / flashcard
+    item_id: str = Field(index=True)
+    stability: Optional[float] = Field(default=None, sa_column=Column(Float))
+    difficulty: Optional[float] = Field(default=None, sa_column=Column(Float))
+    state: str = Field(default="new")  # new / review / relearning
+    reps: int = 0
+    lapses: int = 0
+    last_review: Optional[datetime] = None
+    due: Optional[datetime] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(
+        sa_column=Column(DateTime, default=_now, onupdate=_now, nullable=False)
+    )
 
 
 # ---------------------------------------------------------------------------

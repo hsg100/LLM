@@ -63,13 +63,23 @@ from app.schemas import (
     LandscapePaperOut,
     PaperOut,
     QuizOut,
+    ReviewQueueOut,
+    ReviewResultOut,
+    ReviewSubmitIn,
     SettingsOut,
     SettingsPatch,
+    WeakAreaOut,
     Extraction as ExtractionSchema,
 )
 from app.runtime_settings import EDITABLE_FIELDS, effective_settings, set_overrides
 from app.services.concepts import build_concept_map, concept_slug, concept_to_dict
 from app.services.pdf_storage import resolve_pdf_storage_path
+from app.services.review import (
+    ReviewError,
+    get_queue as get_review_queue,
+    get_weak_areas,
+    submit_review,
+)
 from app.services.uploads import ingest_uploaded_pdf, looks_like_pdf
 from app.users import DEFAULT_USER_ID
 from app.workers.landscape_job import job_channel, run_landscape_job
@@ -600,6 +610,48 @@ def get_quiz(landscape_id: str, s: Session = Depends(get_session)) -> list[QuizO
 def get_flashcards(landscape_id: str, s: Session = Depends(get_session)) -> list[FlashcardOut]:
     rows = s.exec(select(Flashcard).where(Flashcard.landscape_id == landscape_id)).all()
     return [FlashcardOut.model_validate(r, from_attributes=True) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Active recall: review loop (record attempts, FSRS schedule, queue, weak areas)
+# ---------------------------------------------------------------------------
+@router.post("/landscapes/{landscape_id}/review", response_model=ReviewResultOut)
+def submit_review_route(
+    landscape_id: str, body: ReviewSubmitIn, s: Session = Depends(get_session)
+) -> ReviewResultOut:
+    if s.get(Landscape, landscape_id) is None:
+        raise HTTPException(404, "landscape not found")
+    try:
+        result = submit_review(
+            s,
+            landscape_id=landscape_id,
+            item_kind=body.item_kind,
+            item_id=body.item_id,
+            rating=body.rating,
+            correct=body.correct,
+            user_id=DEFAULT_USER_ID,
+        )
+    except ReviewError as e:
+        raise HTTPException(404, str(e))
+    return ReviewResultOut(**result)
+
+
+@router.get("/landscapes/{landscape_id}/review/queue", response_model=ReviewQueueOut)
+def review_queue_route(
+    landscape_id: str, limit: int = 40, s: Session = Depends(get_session)
+) -> ReviewQueueOut:
+    if s.get(Landscape, landscape_id) is None:
+        raise HTTPException(404, "landscape not found")
+    queue = get_review_queue(s, landscape_id=landscape_id, user_id=DEFAULT_USER_ID, limit=limit)
+    return ReviewQueueOut(**queue)
+
+
+@router.get("/landscapes/{landscape_id}/review/weak-areas", response_model=list[WeakAreaOut])
+def weak_areas_route(landscape_id: str, s: Session = Depends(get_session)) -> list[WeakAreaOut]:
+    if s.get(Landscape, landscape_id) is None:
+        raise HTTPException(404, "landscape not found")
+    rows = get_weak_areas(s, landscape_id=landscape_id, user_id=DEFAULT_USER_ID)
+    return [WeakAreaOut(**r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

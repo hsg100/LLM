@@ -959,6 +959,25 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 ### Sprint 6 — Active recall & review loop *(closes §3.9, mobile parts of §3.12)*
 
 > **Goal:** The differentiator — prove understanding, not just consume.
+>
+> **Status: implemented & verified.** The review loop is real now. A pure-Python
+> **FSRS-4.5 scheduler** (`app/services/fsrs.py`, no new deps) models per-item
+> stability/difficulty and grades reviews on the 4-point Again/Hard/Good/Easy
+> scale; `POST /landscapes/{id}/review` records a `ReviewAttempt` *and* advances a
+> new per-item `ReviewState` (migration 0005; `review_attempts.user_id` added).
+> `GET …/review/queue` returns a daily queue (overdue first, then unseen) and
+> `GET …/review/weak-areas` aggregates accuracy per concept (lowest first).
+> Question types are richer: the quiz fallback + prompt now emit
+> **explain-before-reveal** flashcards (`kind=explain`) and **paper-comparison**
+> MCQs/`compare` cards. A responsive **/landscape/[id]/review** screen drives
+> flashcards (reveal → self-grade) and MCQs (pick → grade from correctness),
+> posts each review, and has a weak-areas tab; the landscape page links to it.
+> 83 tests pass (7 FSRS property tests + 1 generator test + a DB-backed
+> review-service test; plus an HTTP TestClient smoke); ruff clean; migrations
+> drift-clean; `next build` green.
+> **Deferred / later:** parameter optimisation/tuning of the FSRS weights from a
+> user's own history (defaults shipped); cloze generation; review history on the
+> Obsidian export.
 
 - **`POST review`** → record `ReviewAttempt`; basic scheduler → **FSRS**;
   **review-queue** + **weak-area** endpoints.

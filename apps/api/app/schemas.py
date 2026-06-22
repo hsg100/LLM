@@ -312,6 +312,55 @@ class FlashcardOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Active recall: review loop (FSRS)
+# ---------------------------------------------------------------------------
+class ReviewSubmitIn(BaseModel):
+    item_kind: Literal["quiz", "flashcard"]
+    item_id: str
+    rating: int = Field(ge=1, le=4, description="FSRS grade: 1 Again, 2 Hard, 3 Good, 4 Easy")
+    correct: Optional[bool] = None
+
+
+class ReviewResultOut(BaseModel):
+    item_kind: str
+    item_id: str
+    rating: int
+    correct: Optional[bool]
+    interval_days: int
+    due: Optional[datetime]
+    state: str
+    reps: int
+    lapses: int
+    stability: Optional[float]
+    difficulty: Optional[float]
+
+
+class ReviewQueueItemOut(BaseModel):
+    item_kind: str
+    item_id: str
+    due: Optional[datetime]
+    state: str
+    reps: int
+    lapses: int
+    quiz: Optional[QuizOut] = None
+    flashcard: Optional[FlashcardOut] = None
+
+
+class ReviewQueueOut(BaseModel):
+    now: datetime
+    due_count: int
+    new_count: int
+    items: list[ReviewQueueItemOut]
+
+
+class WeakAreaOut(BaseModel):
+    concept: str
+    attempts: int
+    correct: int
+    accuracy: float
+
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 class SettingsOut(BaseModel):
