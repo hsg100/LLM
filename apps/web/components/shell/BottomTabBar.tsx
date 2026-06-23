@@ -28,15 +28,21 @@ export function BottomTabBar() {
   const lp = (suffix: string) =>
     landscapeId ? `/landscape/${landscapeId}${suffix}` : "/landscapes";
 
-  const tabs: { key: TabKey; label: string; href: string; icon: JSX.Element; active: boolean }[] = [
+  // Scoped tabs need a landscape. Without one they're "locked": muted, and a tap
+  // sends you to the landscape picker rather than dead-ending. Mirrors the
+  // desktop sidebar's locked rows.
+  const locked = !landscapeId;
+
+  const tabs: { key: TabKey; label: string; href: string; icon: JSX.Element; active: boolean; scoped: boolean }[] = [
     {
       key: "home",
       label: "Home",
-      href: lp(""),
+      href: landscapeId ? lp("") : "/landscapes",
       icon: <IconHome />,
+      scoped: false,
       active:
         pathname === "/" ||
-        pathname === lp("") ||
+        pathname === "/landscapes" ||
         (!!landscapeId && pathname === `/landscape/${landscapeId}`),
     },
     {
@@ -44,31 +50,36 @@ export function BottomTabBar() {
       label: "Read",
       href: lp("/reading-plan"),
       icon: <IconRead />,
+      scoped: true,
       active:
-        pathname.includes("/reading-plan") ||
-        pathname.startsWith("/paper/") ||
-        pathname.includes("/papers"),
+        !locked &&
+        (pathname.includes("/reading-plan") ||
+          pathname.startsWith("/paper/") ||
+          pathname.includes("/papers")),
     },
     {
       key: "learn",
       label: "Learn",
       href: lp("/quiz"),
       icon: <IconLearn />,
-      active: pathname.includes("/quiz") || pathname.includes("/flashcards"),
+      scoped: true,
+      active: !locked && (pathname.includes("/quiz") || pathname.includes("/flashcards")),
     },
     {
       key: "map",
       label: "Map",
       href: lp("/map"),
       icon: <IconMap />,
-      active: pathname.endsWith("/map"),
+      scoped: true,
+      active: !locked && pathname.endsWith("/map"),
     },
     {
       key: "search",
       label: "Search",
       href: "/search",
       icon: <IconSearch />,
-      active: pathname.startsWith("/search") || pathname === "/landscapes",
+      scoped: false,
+      active: pathname.startsWith("/search"),
     },
   ];
 
@@ -88,29 +99,48 @@ export function BottomTabBar() {
         backdropFilter: "blur(8px)",
       }}
     >
-      {tabs.map((t) => (
-        <Link
-          key={t.key}
-          href={t.href}
-          style={{
-            all: "unset",
-            cursor: "pointer",
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 4,
-            color: t.active ? "var(--accent-ink)" : "var(--t3)",
-            minHeight: 44,
-            padding: "4px 0",
-          }}
-        >
-          {t.icon}
-          <span style={{ fontSize: 9.5, fontWeight: t.active ? 600 : 400 }}>
-            {t.label}
-          </span>
-        </Link>
-      ))}
+      {tabs.map((t) => {
+        const isLocked = t.scoped && locked;
+        return (
+          <Link
+            key={t.key}
+            href={t.href}
+            aria-disabled={isLocked}
+            title={isLocked ? "Select a landscape first" : undefined}
+            style={{
+              all: "unset",
+              cursor: "pointer",
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 4,
+              position: "relative",
+              color: t.active ? "var(--accent-ink)" : "var(--t3)",
+              opacity: isLocked ? 0.4 : 1,
+              minHeight: 44,
+              padding: "4px 0",
+            }}
+          >
+            {t.icon}
+            <span style={{ fontSize: 9.5, fontWeight: t.active ? 600 : 400 }}>{t.label}</span>
+            {isLocked && (
+              <span
+                aria-hidden
+                style={{
+                  position: "absolute",
+                  top: 2,
+                  right: "calc(50% - 16px)",
+                  width: 5,
+                  height: 5,
+                  borderRadius: "50%",
+                  background: "var(--t4)",
+                }}
+              />
+            )}
+          </Link>
+        );
+      })}
     </nav>
   );
 }

@@ -1072,6 +1072,61 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 - **Acceptance:** one annotation source of truth; export is a discoverable step
   in the loop; pages componentized; interactive graphs render.
 
+### Sprint 8 — Navigation, information architecture & app shell *(new; closes the IA gaps in §3.12)*
+
+> **Goal:** A coherent two-scope shell where global vs. landscape-scoped actions
+> are obvious, the active landscape is always indicated, and switching/exiting a
+> landscape is one click.
+>
+> **Status: implemented & verified.** Both the headline fix and the planned
+> follow-ups shipped: a **global Jobs index** (`GET /api/jobs` + `/jobs` page)
+> makes every run reachable (sidebar "Job monitor" now resolves); a **⌘K command
+> palette** (`components/shell/CommandPalette.tsx`, opened by ⌘/Ctrl-K or the
+> topbar search box) jumps to any landscape / scoped page / action and doubles as
+> the landscape switcher; `/` now lands on `/landscapes` (workspace, not the
+> create form); the design-system link is gated out of production nav. Backend
+> 110 tests pass (incl. a jobs-index test); ruff clean; `next build` green.
+> Mobile parity is now done too: the bottom-tab scoped tabs (Read/Learn/Map) are
+> muted + locked (with a tap that routes to the landscape picker) when no
+> landscape is selected, mirroring the desktop sidebar. **All 10 audit items are
+> resolved.**
+>
+> The headline fix shipped first:
+> `components/shell/Sidebar.tsx` was reworked into two explicit scopes — a GLOBAL
+> group (All landscapes / New landscape / Settings) that always works, and a
+> CURRENT-LANDSCAPE group (Overview, Cluster map, Papers, Reading plan, Quiz,
+> Flashcards, **Review**, Obsidian export) that is **locked (greyed + lock icon)
+> when no landscape is selected** and otherwise targets the resolved landscape.
+> A **context card** now always shows which landscape the scoped section targets
+> (name + status), distinguishes "current" (you're inside it) from "recent"
+> (remembered via `lib/landscape/recent`, shared with the mobile bottom bar), and
+> gives a one-click **✕ exit / switch** back to all landscapes. The misleading
+> global **"Job monitor → /landscapes"** item was removed; the **Review** route
+> (shipped Sprint 6 but never linked) was added; the **Topbar Export CTA** no
+> longer dead-links when no landscape is active. `next build` green.
+
+**Audit findings (the "issues like this"):**
+
+| # | Finding | Severity | State |
+|---|---------|----------|-------|
+| 1 | Sidebar showed 7 landscape-scoped items globally; dead-linked to `/landscapes` with no landscape; no active-landscape indicator; clunky exit. | 🐞/🎯 | **Fixed** (this sprint) |
+| 2 | "Job monitor" linked to `/landscapes`, not a job — and there was **no global Jobs index**; `/jobs/{id}` was only reachable from the create flow. | 🐞/🎯 | **Fixed** — `GET /api/jobs` + `/jobs` index; sidebar item resolves |
+| 3 | The `/landscape/[id]/review` screen (Sprint 6) was missing from the sidebar entirely. | 🎯 | **Fixed** |
+| 4 | Topbar Export CTA dead-linked to `/landscapes` when no landscape was active. | ⚠️ | **Fixed** |
+| 5 | No landscape **switcher** — changing landscapes means going to `/landscapes` and clicking. | ⚠️ | **Fixed** — ⌘K palette switches landscapes; context card "switch" too |
+| 6 | `FakeSearch` ⌘K box was **non-functional** (visual only). | 🎯 | **Fixed** — real command palette (⌘K / topbar / `fm:open-cmdk`) |
+| 7 | `/` redirected to `/search` (the create form) as "home"; the truer home is `/landscapes`. | ⚠️ | **Fixed** — `/` → `/landscapes` |
+| 8 | **Design-system** link exposed in production nav (dev-only tool). | ⚠️ | **Fixed** — gated behind `NODE_ENV !== "production"` |
+| 9 | Mobile `BottomTabBar` routed scoped tabs to `/landscapes` when no landscape (same root cause as #1); should mirror the locked/disabled treatment. | ⚠️ | **Fixed** — scoped tabs muted + locked, tap routes to the picker |
+| 10 | Giant page components (landscape ~1014 / paper ~988 / jobs ~738) mix fetch+state+view — already logged under Sprint 7 deferred; revisit alongside shell work. | ⚠️ | Deferred (Sprint 7) |
+
+**Remaining follow-up (nice-to-haves):**
+- `GET /api/jobs?landscape_id=` exists and the index covers reachability; a per-landscape
+  "current job" shortcut on the Overview page is a nice-to-have on top.
+- **Acceptance (met):** no nav item dead-links; the active landscape is always visible and
+  switchable in ≤1 click (context card + ⌘K); scoped actions are visibly unavailable until a
+  landscape exists; jobs are reachable for any run via `/jobs`.
+
 ---
 
 ### Dependency summary

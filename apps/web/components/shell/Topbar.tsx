@@ -66,9 +66,7 @@ export function Topbar() {
     return { left: "fieldmap", leftHref: "/", right: "", rightHref: null as string | null };
   })();
 
-  const exportHref = landscapeId
-    ? `/landscape/${landscapeId}/export`
-    : "/landscapes";
+  const exportHref = landscapeId ? `/landscape/${landscapeId}/export` : null;
 
   return (
     <header
@@ -166,37 +164,39 @@ export function Topbar() {
       {/* The Export CTA in the topbar is desktop-only too — on mobile, Export
           lives behind a small icon when a landscape is in route. The big
           primary path is the bottom Learn / Read tabs. */}
-      <Link
-        href={exportHref}
-        className="hidden md:inline-flex"
-        style={{
-          alignItems: "center",
-          gap: 8,
-          padding: "9px 15px",
-          borderRadius: 9,
-          background: "var(--accent)",
-          color: "#fff",
-          fontSize: 12.5,
-          fontWeight: 600,
-          boxShadow: "0 2px 10px rgba(224,97,58,.28)",
-          textDecoration: "none",
-        }}
-      >
-        <svg width="13" height="13" viewBox="0 0 15 15" fill="none">
-          <path
-            d="M7.5 1.8v7m0 0L5 6.3m2.5 2.5L10 6.3"
-            stroke="#fff"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        Export
-      </Link>
+      {exportHref && (
+        <Link
+          href={exportHref}
+          className="hidden md:inline-flex"
+          style={{
+            alignItems: "center",
+            gap: 8,
+            padding: "9px 15px",
+            borderRadius: 9,
+            background: "var(--accent)",
+            color: "#fff",
+            fontSize: 12.5,
+            fontWeight: 600,
+            boxShadow: "0 2px 10px rgba(224,97,58,.28)",
+            textDecoration: "none",
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 15 15" fill="none">
+            <path
+              d="M7.5 1.8v7m0 0L5 6.3m2.5 2.5L10 6.3"
+              stroke="#fff"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          Export
+        </Link>
+      )}
 
       {/* Mobile: a small icon button preserves the export entry-point when
           we're inside a landscape, without crowding the bar. */}
-      {landscapeId && (
+      {landscapeId && exportHref && (
         <Link
           href={exportHref}
           className="md:hidden"
@@ -291,8 +291,13 @@ function StatusPill({ status }: { status: string }) {
 
 function FakeSearch(): ReactNode {
   return (
-    <div
+    <button
+      type="button"
+      onClick={() => window.dispatchEvent(new Event("fm:open-cmdk"))}
+      aria-label="Open command palette"
       style={{
+        all: "unset",
+        cursor: "pointer",
         display: "flex",
         alignItems: "center",
         gap: 7,
@@ -303,6 +308,7 @@ function FakeSearch(): ReactNode {
         color: "var(--t3)",
         fontSize: 12.5,
         width: 230,
+        boxSizing: "border-box",
       }}
     >
       <svg width="13" height="13" viewBox="0 0 15 15" fill="none">
@@ -323,6 +329,6 @@ function FakeSearch(): ReactNode {
       >
         ⌘K
       </span>
-    </div>
+    </button>
   );
 }
