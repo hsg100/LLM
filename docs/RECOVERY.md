@@ -989,6 +989,31 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 ### Sprint 7 — Annotation, export UX & frontend polish *(closes §3.8, §3.10, rest of §3.12)*
 
 > **Goal:** Coherence and finish across the loop.
+>
+> **Status: implemented & verified.** **Annotation** is now single-source
+> (decision #7): `POST /landscapes/{id}/annotate` serves segments from the
+> canonical `annotate_text`; the client (`lib/annotation.ts`) batches all
+> requests in a microtask into one round-trip and caches per (landscape, text),
+> and `ConceptText` consumes server segments — the duplicated TS `annotate()`
+> algorithm is deleted, so there's nothing left to drift. A golden-fixture parity
+> test pins the segmentation (code/headings protected, generic terms skipped,
+> lossless round-trip) plus a DB-backed endpoint test. **Export UX:** a shared
+> `export_service` builds the plan + writes/records in one place (route preview,
+> route export, and the worker all use it — the route's duplicated builder is
+> gone); one-click init was already covered (`write_plan` inits a non-git repo)
+> and the export page already shows prominent preview diffs + commit; added
+> **opt-in auto-export-on-complete** (`obsidian_auto_export` runtime setting →
+> worker exports on a successful finish, best-effort, with a settings toggle).
+> **Graph viz:** a dependency-free interactive SVG **RelationshipGraph**
+> (force layout, draggable nodes, zoom/pan, edge hover with type + rationale,
+> click-through) on a new Clusters/Relationships toggle on the map page,
+> consuming the Sprint-4 `/graph` edges. 88 backend tests pass; ruff clean;
+> migrations drift-clean; `next build` green.
+> **Deferred (honest):** full decomposition of the remaining giant pages
+> (landscape ~1014 / paper ~988 / jobs ~738) into hooks+components — one
+> substantial component (RelationshipGraph) was extracted and the map page
+> branched, but the big pages are otherwise unchanged; a concept-map graph view
+> (the relationship graph shipped) and richer graph styling are later polish.
 
 - **Server-rendered concept annotation** + parity test; client consumes the
   segment contract.
