@@ -35,7 +35,7 @@ function landscapeIdFromPath(pathname: string): string | null {
 
 const SCOPED_ITEMS: Item[] = [
   { suffix: "", label: "Overview", icon: <IconGrid />, isActive: (p, id) => p === `/landscape/${id}` || p === `/landscape/${id}/` },
-  { suffix: "/map", label: "Cluster map", icon: <IconCluster />, isActive: (p, id) => p.startsWith(`/landscape/${id}/map`) },
+  { suffix: "/map", label: "Field map", icon: <IconCluster />, isActive: (p, id) => p.startsWith(`/landscape/${id}/map`) },
   { suffix: "/papers", label: "Papers", icon: <IconList />, isActive: (p, id) => p.startsWith(`/landscape/${id}/papers`) || p.startsWith("/paper/") },
   { suffix: "/reading-plan", label: "Reading plan", icon: <IconPlan />, isActive: (p, id) => p.startsWith(`/landscape/${id}/reading-plan`) },
   { suffix: "/quiz", label: "Quiz", icon: <IconQuiz />, isActive: (p, id) => p.startsWith(`/landscape/${id}/quiz`) },

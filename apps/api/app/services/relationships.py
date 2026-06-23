@@ -173,8 +173,12 @@ def generate_paper_relationships(landscape_papers: list[dict[str, Any]]) -> list
 
     for field, kind in [
         ("benchmarks", "uses_same_benchmark"),
-        ("datasets", "introduces_dataset"),
-        ("metrics", "introduces_metric"),
+        # Shared datasets/metrics are useful evidence, but the extraction does
+        # not prove either paper introduced the artifact. Keep the fallback
+        # conservative; the LLM path may still emit introduces_dataset/metric
+        # when the notes support that stronger claim.
+        ("datasets", "related"),
+        ("metrics", "related"),
     ]:
         buckets: dict[str, list[str]] = defaultdict(list)
         for p in papers:

@@ -40,6 +40,31 @@ def test_paper_relationship_edge_generation():
     assert any(e["type"] == "uses_same_benchmark" for e in edges)
 
 
+def test_relationship_fallback_does_not_overclaim_shared_artifacts():
+    papers = [
+        {
+            "paper_id": "p1",
+            "title": "Dataset Paper A",
+            "year": 2023,
+            "score": 0.9,
+            "extraction": {"datasets": ["RAGBench"], "metrics": ["faithfulness"]},
+        },
+        {
+            "paper_id": "p2",
+            "title": "Dataset Paper B",
+            "year": 2024,
+            "score": 0.8,
+            "extraction": {"datasets": ["RAGBench"], "metrics": ["faithfulness"]},
+        },
+    ]
+
+    edges = generate_paper_relationships(papers)
+
+    assert not any(e["type"] == "introduces_dataset" for e in edges)
+    assert not any(e["type"] == "introduces_metric" for e in edges)
+    assert any(e["type"] == "related" for e in edges)
+
+
 def test_sse_event_format_normalisation():
     ev = _normalise_job_event(
         {

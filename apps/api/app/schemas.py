@@ -92,6 +92,9 @@ class LandscapePaperOut(BaseModel):
     category: str
     rationale: Optional[str] = None
     cluster_id: Optional[str] = None
+    cluster_name: Optional[str] = None
+    cluster_summary: Optional[str] = None
+    cluster_ordinal: Optional[int] = None
     reading_order: Optional[int] = None
 
 
@@ -452,6 +455,9 @@ class PaperGraphNode(BaseModel):
     score: float
     category: str
     cluster_id: Optional[str] = None
+    cluster_name: Optional[str] = None
+    cluster_summary: Optional[str] = None
+    cluster_ordinal: Optional[int] = None
 
 
 class PaperGraphOut(BaseModel):

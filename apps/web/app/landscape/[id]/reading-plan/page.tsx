@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { apiGet, Concept, Landscape, LandscapePaper } from "../../../../lib/api";
-import { clusterColor } from "../../../../lib/clusters";
+import { clusterDisplayColor, clusterLabel } from "../../../../lib/clusters";
 import ConceptText from "../../../../components/concepts/ConceptText";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +9,8 @@ type Step = {
   paperId: string;
   title: string;
   why: string;
-  cluster: string | null;
+  clusterLabel: string;
+  clusterColor: string;
   mins: number;
   status: "done" | "next" | "queued";
 };
@@ -21,11 +22,6 @@ export default async function ReadingPlanPage({ params }: { params: { id: string
     apiGet<Concept[]>(`/api/landscapes/${params.id}/concepts`).catch(() => []),
   ]);
   const synth = (landscape.synthesis || {}) as any;
-  const clusterNameById: Record<string, string> = {};
-  (synth.clusters ?? []).forEach((c: any) => {
-    if (c.id) clusterNameById[c.id] = c.name;
-    if (c.name) clusterNameById[c.name] = c.name;
-  });
 
   let raw: any[] = Array.isArray(synth.reading_path) ? synth.reading_path : [];
   if (raw.length === 0) {
@@ -59,11 +55,13 @@ export default async function ReadingPlanPage({ params }: { params: { id: string
     // ~5 min per ~1.5k tokens — rough estimate from abstract length.
     const abstractLen = paper?.paper.abstract?.length ?? 1200;
     const mins = Math.max(15, Math.min(45, Math.round(abstractLen / 60)));
+    const fallbackCluster = s.cluster ? String(s.cluster) : null;
     return {
       paperId: s.paper_id,
       title: (s.title || paper?.paper.title || "Untitled").split(":")[0],
       why: s.why || "",
-      cluster: s.cluster || paper?.cluster_id || null,
+      clusterLabel: paper ? clusterLabel(paper) : clusterLabel(fallbackCluster),
+      clusterColor: paper ? clusterDisplayColor(paper) : clusterDisplayColor(fallbackCluster),
       mins,
       status,
     };
@@ -182,8 +180,6 @@ export default async function ReadingPlanPage({ params }: { params: { id: string
               }}
             />
             {steps.map((s, i) => {
-              const clColor = clusterColor(s.cluster);
-              const clName = (s.cluster && clusterNameById[s.cluster]) || s.cluster || "—";
               const badgeText =
                 s.status === "done" ? "Done" : s.status === "next" ? "Up next" : "Queued";
               const badgeFg =
@@ -215,8 +211,8 @@ export default async function ReadingPlanPage({ params }: { params: { id: string
                       width: 16,
                       height: 16,
                       borderRadius: "50%",
-                      background: s.status === "done" ? clColor : "var(--bg)",
-                      border: `2px solid ${clColor}`,
+                      background: s.status === "done" ? s.clusterColor : "var(--bg)",
+                      border: `2px solid ${s.clusterColor}`,
                       marginTop: 16,
                       flex: "none",
                     }}
@@ -296,10 +292,10 @@ export default async function ReadingPlanPage({ params }: { params: { id: string
                             width: 7,
                             height: 7,
                             borderRadius: "50%",
-                            background: clColor,
+                            background: s.clusterColor,
                           }}
                         />
-                        {clName}
+                        {s.clusterLabel}
                       </span>
                       <span>~{s.mins} min</span>
                     </div>

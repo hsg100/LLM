@@ -30,6 +30,7 @@ from app.exporters.obsidian_git import (
 )
 from app.models import (
     Chunk,
+    Cluster,
     Concept,
     Extraction,
     Flashcard,
@@ -153,6 +154,20 @@ def _papers_by_id(s: Session, paper_ids: list[str]) -> dict[str, Paper]:
     return {p.id: p for p in rows}
 
 
+def _clusters_by_id(s: Session, cluster_ids: list[str | None]) -> dict[str, Cluster]:
+    """Batch-load persisted clusters for display metadata.
+
+    ``LandscapePaper.cluster_id`` stores the database row id, while synthesis
+    cluster ids/names are not persisted on the link. Exposing this metadata
+    prevents UUIDs from leaking into clients.
+    """
+    ids = [cid for cid in dict.fromkeys(cluster_ids) if cid]
+    if not ids:
+        return {}
+    rows = s.exec(select(Cluster).where(Cluster.id.in_(ids))).all()
+    return {c.id: c for c in rows}
+
+
 @router.get("/landscapes/{landscape_id}/papers", response_model=list[LandscapePaperOut])
 def get_landscape_papers(landscape_id: str, s: Session = Depends(get_session)) -> list[LandscapePaperOut]:
     links = s.exec(
@@ -161,11 +176,13 @@ def get_landscape_papers(landscape_id: str, s: Session = Depends(get_session)) -
         .order_by(LandscapePaper.score.desc())
     ).all()
     papers = _papers_by_id(s, [link.paper_id for link in links])
+    clusters = _clusters_by_id(s, [link.cluster_id for link in links])
     out: list[LandscapePaperOut] = []
     for link in links:
         paper = papers.get(link.paper_id)
         if paper is None:
             continue
+        cluster = clusters.get(link.cluster_id or "")
         out.append(
             LandscapePaperOut(
                 paper=PaperOut.model_validate(paper, from_attributes=True),
@@ -173,6 +190,9 @@ def get_landscape_papers(landscape_id: str, s: Session = Depends(get_session)) -
                 category=link.category,
                 rationale=link.rationale,
                 cluster_id=link.cluster_id,
+                cluster_name=cluster.name if cluster else None,
+                cluster_summary=cluster.summary if cluster else None,
+                cluster_ordinal=cluster.ordinal if cluster else None,
                 reading_order=link.reading_order,
             )
         )
@@ -284,17 +304,22 @@ def get_landscape_graph(landscape_id: str, s: Session = Depends(get_session)) ->
         .order_by(LandscapePaper.score.desc())
     ).all()
     papers = _papers_by_id(s, [link.paper_id for link in links])
+    clusters = _clusters_by_id(s, [link.cluster_id for link in links])
     nodes: list[PaperGraphNode] = []
     for link in links:
         paper = papers.get(link.paper_id)
         if paper is None:
             continue
+        cluster = clusters.get(link.cluster_id or "")
         nodes.append(
             PaperGraphNode(
                 paper=PaperOut.model_validate(paper, from_attributes=True),
                 score=link.score,
                 category=link.category,
                 cluster_id=link.cluster_id,
+                cluster_name=cluster.name if cluster else None,
+                cluster_summary=cluster.summary if cluster else None,
+                cluster_ordinal=cluster.ordinal if cluster else None,
             )
         )
 

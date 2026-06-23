@@ -19,7 +19,7 @@ function landscapeIdFromPath(p: string): string | null {
 
 const SCOPED: { suffix: string; label: string }[] = [
   { suffix: "", label: "Overview" },
-  { suffix: "/map", label: "Cluster map" },
+  { suffix: "/map", label: "Field map" },
   { suffix: "/papers", label: "Papers" },
   { suffix: "/reading-plan", label: "Reading plan" },
   { suffix: "/quiz", label: "Quiz" },

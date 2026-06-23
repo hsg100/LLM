@@ -1,104 +1,103 @@
 "use client";
 
-// Dependency-free interactive relationship graph.
-//
-// Runs a small deterministic force simulation on mount, then renders an SVG with
-// draggable nodes, wheel zoom, background pan, edge hover (type + rationale), and
-// click-through to the paper. Kept self-contained so we don't pull a heavy graph
-// library into the bundle.
-
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import type { ReactNode } from "react";
+import { useMemo, useState } from "react";
 import type { GraphEdge, GraphNode } from "../../lib/api";
+import { clusterDisplayColor, clusterLabel, hexAlpha } from "../../lib/clusters";
 
 type Pt = { x: number; y: number };
+type RelationGroup = "all" | "builds" | "evaluation" | "contrast" | "survey" | "related";
 
-const EDGE_COLOR: Record<string, string> = {
-  extends: "#2f9d6b",
-  improves: "#2f9d6b",
-  contradicts: "#cf4d6f",
-  critiques: "#cf4d6f",
-  applies: "#5b8def",
-  benchmarks: "#8b6ae0",
-  prerequisite: "#e0613a",
+type RelationMeta = {
+  label: string;
+  group: Exclude<RelationGroup, "all">;
+  color: string;
+  description: string;
 };
 
-const CAT_COLOR: Record<string, string> = {
-  "must-read": "#e0613a",
-  useful: "#2f9d6b",
-  optional: "#6a8cc0",
-  "skip-for-now": "#8a867c",
+const REL: Record<string, RelationMeta> = {
+  extends: {
+    label: "Builds on",
+    group: "builds",
+    color: "#2f9d6b",
+    description: "One paper extends the method, framing, or result of another.",
+  },
+  improves: {
+    label: "Improves",
+    group: "builds",
+    color: "#2f9d6b",
+    description: "One paper claims a stronger method or result than another.",
+  },
+  baseline_for: {
+    label: "Baseline for",
+    group: "builds",
+    color: "#5b8def",
+    description: "The source paper is used as a comparison point for the target.",
+  },
+  uses_same_benchmark: {
+    label: "Shared benchmark",
+    group: "evaluation",
+    color: "#8b6ae0",
+    description: "Both papers evaluate against the same benchmark or task.",
+  },
+  introduces_dataset: {
+    label: "Introduces dataset",
+    group: "evaluation",
+    color: "#8b6ae0",
+    description: "The source paper introduces a dataset used by the target.",
+  },
+  introduces_metric: {
+    label: "Introduces metric",
+    group: "evaluation",
+    color: "#8b6ae0",
+    description: "The source paper introduces a metric used by the target.",
+  },
+  contradicts: {
+    label: "Contrasts",
+    group: "contrast",
+    color: "#cf4d6f",
+    description: "The papers make conflicting claims or report tension.",
+  },
+  critiques: {
+    label: "Critiques",
+    group: "contrast",
+    color: "#cf4d6f",
+    description: "The source paper critiques assumptions, methods, or limits of the target.",
+  },
+  survey_of: {
+    label: "Surveys",
+    group: "survey",
+    color: "#d6a23a",
+    description: "The source paper is a survey or review connected to the target.",
+  },
+  related: {
+    label: "Related",
+    group: "related",
+    color: "#8a867c",
+    description: "The papers are adjacent in topic, cluster, or extracted evidence.",
+  },
 };
 
-const W = 760;
-const H = 520;
+const FILTERS: { id: RelationGroup; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "builds", label: "Builds on" },
+  { id: "evaluation", label: "Evaluation" },
+  { id: "contrast", label: "Contrast" },
+  { id: "survey", label: "Survey" },
+  { id: "related", label: "Related" },
+];
 
-function simulate(nodes: GraphNode[], edges: GraphEdge[]): Record<string, Pt> {
-  const ids = nodes.map((n) => n.paper.id);
-  const pos: Record<string, Pt> = {};
-  // Deterministic seed: place on a circle by index.
-  ids.forEach((id, i) => {
-    const a = (2 * Math.PI * i) / Math.max(1, ids.length);
-    pos[id] = { x: W / 2 + Math.cos(a) * 180, y: H / 2 + Math.sin(a) * 180 };
-  });
-  const adj = edges
-    .filter((e) => pos[e.source_paper_id] && pos[e.target_paper_id])
-    .map((e) => [e.source_paper_id, e.target_paper_id] as const);
+const W = 920;
+const ROW_H = 118;
 
-  const K_REP = 5200; // repulsion
-  const K_SPRING = 0.02; // attraction
-  const REST = 120;
-  for (let iter = 0; iter < 220; iter++) {
-    const disp: Record<string, Pt> = {};
-    for (const id of ids) disp[id] = { x: 0, y: 0 };
-    // Repulsion between all pairs.
-    for (let i = 0; i < ids.length; i++) {
-      for (let j = i + 1; j < ids.length; j++) {
-        const a = pos[ids[i]];
-        const b = pos[ids[j]];
-        let dx = a.x - b.x;
-        let dy = a.y - b.y;
-        let d2 = dx * dx + dy * dy;
-        if (d2 < 1) {
-          dx = (i - j) || 1;
-          dy = 1;
-          d2 = 2;
-        }
-        const f = K_REP / d2;
-        const d = Math.sqrt(d2);
-        disp[ids[i]].x += (dx / d) * f;
-        disp[ids[i]].y += (dy / d) * f;
-        disp[ids[j]].x -= (dx / d) * f;
-        disp[ids[j]].y -= (dy / d) * f;
-      }
-    }
-    // Spring attraction along edges.
-    for (const [s, t] of adj) {
-      const a = pos[s];
-      const b = pos[t];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const f = K_SPRING * (d - REST);
-      disp[s].x += (dx / d) * f * 20;
-      disp[s].y += (dy / d) * f * 20;
-      disp[t].x -= (dx / d) * f * 20;
-      disp[t].y -= (dy / d) * f * 20;
-    }
-    const cool = 1 - iter / 260;
-    for (const id of ids) {
-      // Pull gently toward center to keep things on-canvas.
-      disp[id].x += (W / 2 - pos[id].x) * 0.01;
-      disp[id].y += (H / 2 - pos[id].y) * 0.01;
-      const dx = disp[id].x;
-      const dy = disp[id].y;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const step = Math.min(len, 24) * cool;
-      pos[id].x += (dx / len) * step;
-      pos[id].y += (dy / len) * step;
-    }
-  }
-  return pos;
+export function relationshipMeta(type: string): RelationMeta {
+  return REL[type] || REL.related;
+}
+
+export function relationshipGroupLabel(type: string): string {
+  const group = relationshipMeta(type).group;
+  return FILTERS.find((f) => f.id === group)?.label || "Related";
 }
 
 export default function RelationshipGraph({
@@ -110,15 +109,10 @@ export default function RelationshipGraph({
   edges: GraphEdge[];
   landscapeId: string;
 }) {
-  const router = useRouter();
-  const initial = useMemo(() => simulate(nodes, edges), [nodes, edges]);
-  const [pos, setPos] = useState<Record<string, Pt>>(initial);
-  const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
-  const [hoverEdge, setHoverEdge] = useState<number | null>(null);
-  const [hoverNode, setHoverNode] = useState<string | null>(null);
-  const drag = useRef<{ id: string | null; panning: boolean; sx: number; sy: number; ox: number; oy: number } | null>(null);
-
-  useEffect(() => setPos(initial), [initial]);
+  const [groupFilter, setGroupFilter] = useState<RelationGroup>("all");
+  const [clusterFilter, setClusterFilter] = useState("all");
+  const [selectedEdgeKey, setSelectedEdgeKey] = useState<string | null>(null);
+  const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
 
   const byId = useMemo(() => {
     const m: Record<string, GraphNode> = {};
@@ -126,125 +120,386 @@ export default function RelationshipGraph({
     return m;
   }, [nodes]);
 
+  const clusters = useMemo(() => {
+    const byCluster: Record<string, GraphNode[]> = {};
+    for (const node of nodes) {
+      const key = node.cluster_id || "unclustered";
+      (byCluster[key] ||= []).push(node);
+    }
+    return Object.entries(byCluster)
+      .map(([id, items]) => {
+        const sorted = [...items].sort((a, b) => b.score - a.score);
+        const first = sorted[0];
+        return {
+          id,
+          label: id === "unclustered" ? "Unclustered papers" : clusterLabel(first),
+          color: first ? clusterDisplayColor(first) : "var(--t4)",
+          ordinal: first?.cluster_ordinal ?? 999,
+          nodes: sorted,
+        };
+      })
+      .sort((a, b) => a.ordinal - b.ordinal || a.label.localeCompare(b.label));
+  }, [nodes]);
+
+  const layout = useMemo(() => {
+    const pos: Record<string, Pt> = {};
+    clusters.forEach((cluster, gi) => {
+      const y = 74 + gi * ROW_H;
+      const count = cluster.nodes.length;
+      cluster.nodes.forEach((node, ni) => {
+        const spread = W - 330;
+        const x = count === 1 ? 500 : 255 + (spread * ni) / Math.max(1, count - 1);
+        pos[node.paper.id] = { x, y };
+      });
+    });
+    return pos;
+  }, [clusters]);
+
+  const filteredEdges = useMemo(() => {
+    return edges.filter((edge) => {
+      const meta = relationshipMeta(edge.type);
+      if (groupFilter !== "all" && meta.group !== groupFilter) return false;
+      if (clusterFilter !== "all") {
+        const src = byId[edge.source_paper_id];
+        const dst = byId[edge.target_paper_id];
+        if (src?.cluster_id !== clusterFilter && dst?.cluster_id !== clusterFilter) return false;
+      }
+      return true;
+    });
+  }, [edges, groupFilter, clusterFilter, byId]);
+
+  const selectedEdge = selectedPaperId
+    ? null
+    : filteredEdges.find((edge) => edgeKey(edge) === selectedEdgeKey) || filteredEdges[0] || null;
+  const selectedPaper = selectedPaperId ? byId[selectedPaperId] : null;
+  const height = Math.max(420, 42 + clusters.length * ROW_H);
+
   if (!nodes.length) {
     return (
-      <div style={{ fontSize: 13, color: "var(--t3)", border: "1px dashed var(--bd)", borderRadius: 12, padding: "20px", background: "var(--panel)" }}>
+      <div style={{ fontSize: 13, color: "var(--t3)", border: "1px dashed var(--bd)", borderRadius: 12, padding: 20, background: "var(--panel)" }}>
         No papers in this landscape yet.
       </div>
     );
   }
 
-  function toLocal(e: React.MouseEvent): Pt {
-    const rect = (e.currentTarget as SVGElement).closest("svg")!.getBoundingClientRect();
-    const sx = (e.clientX - rect.left) * (W / rect.width);
-    const sy = (e.clientY - rect.top) * (H / rect.height);
-    return { x: (sx - view.x) / view.scale, y: (sy - view.y) / view.scale };
-  }
-
-  function onNodeDown(id: string, e: React.MouseEvent) {
-    e.stopPropagation();
-    const p = toLocal(e);
-    drag.current = { id, panning: false, sx: p.x, sy: p.y, ox: pos[id].x, oy: pos[id].y };
-  }
-  function onBgDown(e: React.MouseEvent) {
-    drag.current = { id: null, panning: true, sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y };
-  }
-  function onMove(e: React.MouseEvent) {
-    const d = drag.current;
-    if (!d) return;
-    if (d.panning) {
-      setView((v) => ({ ...v, x: d.ox + (e.clientX - d.sx), y: d.oy + (e.clientY - d.sy) }));
-    } else if (d.id) {
-      const p = toLocal(e);
-      setPos((prev) => ({ ...prev, [d.id!]: { x: d.ox + (p.x - d.sx), y: d.oy + (p.y - d.sy) } }));
-    }
-  }
-  function onUp() {
-    drag.current = null;
-  }
-  function onWheel(e: React.WheelEvent) {
-    e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    setView((v) => ({ ...v, scale: Math.max(0.4, Math.min(2.5, v.scale * factor)) }));
-  }
-
-  const hovered = hoverEdge != null ? edges[hoverEdge] : null;
-
   return (
-    <div style={{ position: "relative" }}>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", height: "auto", border: "1px solid var(--bd)", borderRadius: 14, background: "var(--panel)", cursor: drag.current?.panning ? "grabbing" : "grab", touchAction: "none" }}
-        onMouseDown={onBgDown}
-        onMouseMove={onMove}
-        onMouseUp={onUp}
-        onMouseLeave={onUp}
-        onWheel={onWheel}
-      >
-        <g transform={`translate(${view.x},${view.y}) scale(${view.scale})`}>
-          {edges.map((e, i) => {
-            const a = pos[e.source_paper_id];
-            const b = pos[e.target_paper_id];
-            if (!a || !b) return null;
-            const active = hoverEdge === i || hoverNode === e.source_paper_id || hoverNode === e.target_paper_id;
-            return (
-              <line
-                key={i}
-                x1={a.x}
-                y1={a.y}
-                x2={b.x}
-                y2={b.y}
-                stroke={EDGE_COLOR[e.type] || "var(--t4)"}
-                strokeWidth={active ? 2.4 : 1.1}
-                strokeOpacity={active ? 0.95 : 0.4}
-                onMouseEnter={() => setHoverEdge(i)}
-                onMouseLeave={() => setHoverEdge(null)}
-              />
-            );
-          })}
-          {nodes.map((n) => {
-            const p = pos[n.paper.id];
-            if (!p) return null;
-            const r = 7 + Math.min(8, (n.score || 0) * 8);
-            const color = CAT_COLOR[n.category] || "#6a8cc0";
-            const active = hoverNode === n.paper.id;
-            return (
-              <g key={n.paper.id} transform={`translate(${p.x},${p.y})`} style={{ cursor: "pointer" }}
-                onMouseDown={(e) => onNodeDown(n.paper.id, e)}
-                onMouseEnter={() => setHoverNode(n.paper.id)}
-                onMouseLeave={() => setHoverNode(null)}
-                onClick={(e) => { e.stopPropagation(); if (!drag.current || drag.current.id === null) router.push(`/paper/${n.paper.id}`); }}
-              >
-                <circle r={r} fill={color} fillOpacity={active ? 1 : 0.85} stroke="var(--panel)" strokeWidth={1.5} />
-                {active && (
-                  <text x={r + 4} y={4} fontSize={11} fill="var(--t1)" style={{ pointerEvents: "none" }}>
-                    {n.paper.title.slice(0, 48)}
-                    {n.paper.title.length > 48 ? "…" : ""}
-                  </text>
-                )}
-              </g>
-            );
-          })}
-        </g>
-      </svg>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 330px", gap: 16, alignItems: "start" }}>
+      <section>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          {FILTERS.map((filter) => (
+            <button
+              key={filter.id}
+              onClick={() => {
+                setGroupFilter(filter.id);
+                setSelectedEdgeKey(null);
+                setSelectedPaperId(null);
+              }}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                padding: "7px 11px",
+                borderRadius: 8,
+                border: "1px solid var(--bd)",
+                background: groupFilter === filter.id ? "var(--accent)" : "var(--panel)",
+                color: groupFilter === filter.id ? "#fff" : "var(--t2)",
+                fontSize: 12,
+              }}
+            >
+              {filter.label}
+            </button>
+          ))}
+          <select
+            value={clusterFilter}
+            onChange={(e) => {
+              setClusterFilter(e.target.value);
+              setSelectedEdgeKey(null);
+              setSelectedPaperId(null);
+            }}
+            style={{
+              marginLeft: "auto",
+              minWidth: 190,
+              border: "1px solid var(--bd)",
+              borderRadius: 8,
+              background: "var(--panel)",
+              color: "var(--t2)",
+              padding: "7px 10px",
+              fontSize: 12,
+            }}
+          >
+            <option value="all">All clusters</option>
+            {clusters.map((cluster) => (
+              <option key={cluster.id} value={cluster.id}>{cluster.label}</option>
+            ))}
+          </select>
+        </div>
 
-      {hovered && (
-        <div style={{ position: "absolute", left: 12, bottom: 12, maxWidth: 360, background: "var(--panel)", border: "1px solid var(--bd)", borderRadius: 10, padding: "10px 12px", boxShadow: "var(--shadow)", fontSize: 12 }}>
-          <span className="font-mono" style={{ color: EDGE_COLOR[hovered.type] || "var(--t3)", fontSize: 11 }}>
-            {hovered.type}
-          </span>
-          <div style={{ color: "var(--t2)", marginTop: 4, lineHeight: 1.45 }}>
-            <strong>{byId[hovered.source_paper_id]?.paper.title.slice(0, 40)}</strong>
-            {" → "}
-            <strong>{byId[hovered.target_paper_id]?.paper.title.slice(0, 40)}</strong>
-            {hovered.rationale ? <div style={{ marginTop: 4, color: "var(--t3)" }}>{hovered.rationale}</div> : null}
+        <div style={{ border: "1px solid var(--bd)", borderRadius: 10, background: "var(--panel)", overflow: "hidden", boxShadow: "var(--shadow)" }}>
+          <svg viewBox={`0 0 ${W} ${height}`} style={{ width: "100%", height: "auto", display: "block" }}>
+            <defs>
+              {Object.entries(REL).map(([type, meta]) => (
+                <marker
+                  key={type}
+                  id={`arrow-${type}`}
+                  markerWidth="8"
+                  markerHeight="8"
+                  refX="7"
+                  refY="4"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <path d="M0,0 L8,4 L0,8 Z" fill={meta.color} />
+                </marker>
+              ))}
+            </defs>
+
+            {clusters.map((cluster, gi) => {
+              const y = 24 + gi * ROW_H;
+              return (
+                <g key={cluster.id}>
+                  <rect x="14" y={y} width={W - 28} height={ROW_H - 18} rx="10" fill={hexAlpha(cluster.color, 0.08)} />
+                  <circle cx="34" cy={y + 26} r="5" fill={cluster.color} />
+                  <text x="48" y={y + 30} fontSize="13" fill="var(--t1)" fontWeight="600">
+                    {cluster.label}
+                  </text>
+                  <text x="48" y={y + 50} fontSize="10.5" fill="var(--t4)">
+                    {cluster.nodes.length} paper{cluster.nodes.length === 1 ? "" : "s"}
+                  </text>
+                </g>
+              );
+            })}
+
+            {filteredEdges.map((edge) => {
+              const src = layout[edge.source_paper_id];
+              const dst = layout[edge.target_paper_id];
+              if (!src || !dst) return null;
+              const meta = relationshipMeta(edge.type);
+              const key = edgeKey(edge);
+              const active = selectedEdge ? key === edgeKey(selectedEdge) : false;
+              const midY = (src.y + dst.y) / 2;
+              const curve = src.y === dst.y ? 36 : Math.max(42, Math.abs(src.y - dst.y) * 0.36);
+              const d = src.y === dst.y
+                ? `M ${src.x} ${src.y} C ${src.x + curve} ${src.y - 28}, ${dst.x - curve} ${dst.y - 28}, ${dst.x} ${dst.y}`
+                : `M ${src.x} ${src.y} C ${src.x + curve} ${midY}, ${dst.x - curve} ${midY}, ${dst.x} ${dst.y}`;
+              return (
+                <path
+                  key={key}
+                  d={d}
+                  fill="none"
+                  stroke={meta.color}
+                  strokeWidth={active ? 2.6 : 1.5}
+                  strokeOpacity={active ? 0.95 : 0.42}
+                  markerEnd={`url(#arrow-${edge.type in REL ? edge.type : "related"})`}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => {
+                    setSelectedPaperId(null);
+                    setSelectedEdgeKey(key);
+                  }}
+                />
+              );
+            })}
+
+            {nodes.map((node) => {
+              const p = layout[node.paper.id];
+              if (!p) return null;
+              const color = clusterDisplayColor(node);
+              const selected = selectedPaperId === node.paper.id;
+              const connected = selectedEdge
+                ? selectedEdge.source_paper_id === node.paper.id || selectedEdge.target_paper_id === node.paper.id
+                : false;
+              const radius = 8 + Math.min(8, node.score * 7);
+              return (
+                <g
+                  key={node.paper.id}
+                  transform={`translate(${p.x},${p.y})`}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => {
+                    setSelectedPaperId(node.paper.id);
+                    setSelectedEdgeKey(null);
+                  }}
+                >
+                  <circle
+                    r={radius + (selected || connected ? 3 : 0)}
+                    fill={selected ? "var(--accent)" : color}
+                    fillOpacity={selected || connected ? 1 : 0.86}
+                    stroke="var(--panel)"
+                    strokeWidth="2"
+                  />
+                  <text x={radius + 8} y="-2" fontSize="11.5" fill="var(--t1)" fontWeight={selected || connected ? 650 : 500}>
+                    {shortTitle(node.paper.title, 34)}
+                  </text>
+                  <text x={radius + 8} y="14" fontSize="9.5" fill="var(--t4)">
+                    {Math.round(node.score * 100)} score
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: "var(--t3)" }}>
+          <span>{filteredEdges.length} visible relationship{filteredEdges.length === 1 ? "" : "s"}</span>
+          <span>Click a line for evidence, or a paper for context.</span>
+        </div>
+      </section>
+
+      <aside style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Inspector
+          selectedPaper={selectedPaper}
+          selectedEdge={selectedPaper ? null : selectedEdge}
+          byId={byId}
+          landscapeId={landscapeId}
+        />
+
+        <div style={{ border: "1px solid var(--bd)", borderRadius: 10, background: "var(--panel)", boxShadow: "var(--shadow)", overflow: "hidden" }}>
+          <div className="font-mono" style={{ padding: "12px 13px", borderBottom: "1px solid var(--bd)", fontSize: 10, color: "var(--t4)", textTransform: "uppercase" }}>
+            Relationship list
           </div>
+          {filteredEdges.length === 0 ? (
+            <div style={{ padding: 14, fontSize: 12.5, color: "var(--t3)", lineHeight: 1.45 }}>
+              No relationships match the current filters.
+            </div>
+          ) : (
+            <div style={{ maxHeight: 360, overflowY: "auto" }}>
+              {filteredEdges.map((edge) => {
+                const meta = relationshipMeta(edge.type);
+                const src = byId[edge.source_paper_id];
+                const dst = byId[edge.target_paper_id];
+                const active = selectedEdge ? edgeKey(edge) === edgeKey(selectedEdge) : false;
+                return (
+                  <button
+                    key={edgeKey(edge)}
+                    onClick={() => {
+                      setSelectedPaperId(null);
+                      setSelectedEdgeKey(edgeKey(edge));
+                    }}
+                    style={{
+                      all: "unset",
+                      cursor: "pointer",
+                      display: "block",
+                      width: "100%",
+                      boxSizing: "border-box",
+                      padding: "12px 13px",
+                      borderBottom: "1px solid var(--bd2)",
+                      background: active ? hexAlpha(meta.color, 0.1) : "transparent",
+                    }}
+                  >
+                    <div className="font-mono" style={{ color: meta.color, fontSize: 10, textTransform: "uppercase", marginBottom: 6 }}>
+                      {meta.label}
+                    </div>
+                    <div style={{ fontSize: 12.3, lineHeight: 1.35, color: "var(--t2)" }}>
+                      {shortTitle(src?.paper.title, 46)} -&gt; {shortTitle(dst?.paper.title, 46)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function Inspector({
+  selectedPaper,
+  selectedEdge,
+  byId,
+  landscapeId,
+}: {
+  selectedPaper: GraphNode | null;
+  selectedEdge: GraphEdge | null;
+  byId: Record<string, GraphNode>;
+  landscapeId: string;
+}) {
+  if (selectedPaper) {
+    return (
+      <Panel title="Selected paper">
+        <div style={{ fontSize: 14, fontWeight: 650, lineHeight: 1.35, marginBottom: 8 }}>
+          {selectedPaper.paper.title}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, fontSize: 11.5, color: "var(--t3)" }}>
+          <span>{clusterLabel(selectedPaper)}</span>
+          <span>{selectedPaper.paper.year ?? "year n/a"}</span>
+          <span>{Math.round(selectedPaper.score * 100)} score</span>
+        </div>
+        <Link href={`/paper/${selectedPaper.paper.id}`} style={{ fontSize: 12.5, color: "var(--accent-ink)", fontWeight: 600 }}>
+          Open paper
+        </Link>
+      </Panel>
+    );
+  }
+
+  if (!selectedEdge) {
+    return (
+      <Panel title="Relationship evidence">
+        <div style={{ fontSize: 12.5, color: "var(--t3)", lineHeight: 1.45 }}>
+          No relationships are available yet. Use the learning lanes to start reading, then rerun with richer extractions for more graph evidence.
+        </div>
+      </Panel>
+    );
+  }
+
+  const meta = relationshipMeta(selectedEdge.type);
+  const src = byId[selectedEdge.source_paper_id];
+  const dst = byId[selectedEdge.target_paper_id];
+  return (
+    <Panel title="Relationship evidence">
+      <div className="font-mono" style={{ color: meta.color, fontSize: 11, textTransform: "uppercase", marginBottom: 8 }}>
+        {meta.label}
+      </div>
+      <div style={{ fontSize: 12.5, color: "var(--t3)", lineHeight: 1.45, marginBottom: 12 }}>
+        {meta.description}
+      </div>
+      <PaperLink label="Source" node={src} />
+      <div style={{ height: 1, background: "var(--bd2)", margin: "12px 0" }} />
+      <PaperLink label="Target" node={dst} />
+      {selectedEdge.rationale && (
+        <div style={{ marginTop: 13, paddingTop: 12, borderTop: "1px solid var(--bd2)", fontSize: 12.5, color: "var(--t2)", lineHeight: 1.5 }}>
+          {selectedEdge.rationale}
         </div>
       )}
+      <Link href={`/landscape/${landscapeId}/papers`} style={{ display: "inline-block", marginTop: 13, fontSize: 12.5, color: "var(--accent-ink)", fontWeight: 600 }}>
+        Compare in ranked list
+      </Link>
+    </Panel>
+  );
+}
 
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: "var(--t3)" }}>
-        <span>Drag nodes · scroll to zoom · drag canvas to pan · click a node to open the paper</span>
+function PaperLink({ label, node }: { label: string; node?: GraphNode }) {
+  if (!node) {
+    return <div style={{ fontSize: 12.5, color: "var(--t4)" }}>{label}: missing paper</div>;
+  }
+  return (
+    <div>
+      <div className="font-mono" style={{ fontSize: 10, color: "var(--t4)", marginBottom: 4 }}>
+        {label}
+      </div>
+      <Link href={`/paper/${node.paper.id}`} style={{ color: "var(--t1)", fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>
+        {node.paper.title}
+      </Link>
+      <div style={{ marginTop: 5, fontSize: 11.5, color: "var(--t3)" }}>
+        {clusterLabel(node)} · {node.paper.year ?? "year n/a"}
       </div>
     </div>
   );
+}
+
+function Panel({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div style={{ border: "1px solid var(--bd)", borderRadius: 10, background: "var(--panel)", boxShadow: "var(--shadow)", padding: 15 }}>
+      <div className="font-mono" style={{ fontSize: 10, color: "var(--t4)", marginBottom: 12, textTransform: "uppercase" }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function edgeKey(edge: GraphEdge): string {
+  return `${edge.source_paper_id}:${edge.target_paper_id}:${edge.type}`;
+}
+
+function shortTitle(title: string | null | undefined, n = 60): string {
+  const s = title || "Untitled";
+  return s.length > n ? `${s.slice(0, n - 1)}...` : s;
 }

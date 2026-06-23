@@ -7,7 +7,7 @@ import {
   LandscapePaper,
   Quiz,
 } from "../../../lib/api";
-import { CLUSTER_PALETTE, clusterColor } from "../../../lib/clusters";
+import { CLUSTER_PALETTE, clusterColor, clusterDisplayColor } from "../../../lib/clusters";
 import ConceptText from "../../../components/concepts/ConceptText";
 
 export const dynamic = "force-dynamic";
@@ -142,7 +142,7 @@ export default async function LandscapeOverview({ params }: { params: { id: stri
   // reading-plan heuristic treats indices 0-1 as done).
   const continueReading = readFirstAll[2] ?? readFirstAll[0] ?? null;
   const continueCluster = continueReading
-    ? clusterColor(continueReading.cluster_id)
+    ? clusterDisplayColor(continueReading)
     : "var(--accent)";
 
   return (

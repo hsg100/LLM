@@ -57,6 +57,39 @@ export function clusterColor(clusterId: string | null | undefined): string {
   return CLUSTER_PALETTE[Math.abs(h) % CLUSTER_PALETTE.length];
 }
 
+export type ClusterDisplayInput = {
+  cluster_id?: string | null;
+  cluster_name?: string | null;
+  cluster_ordinal?: number | null;
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isUuidLike(value: string | null | undefined): boolean {
+  return UUID_RE.test(String(value || "").trim());
+}
+
+export function clusterLabel(cluster: ClusterDisplayInput | string | null | undefined): string {
+  if (!cluster) return "Unclustered papers";
+  if (typeof cluster === "string") return isUuidLike(cluster) ? "Cluster" : cluster;
+  const name = (cluster.cluster_name || "").trim();
+  if (name) return name;
+  if (typeof cluster.cluster_ordinal === "number") return `Cluster ${cluster.cluster_ordinal + 1}`;
+  const id = (cluster.cluster_id || "").trim();
+  if (!id) return "Unclustered papers";
+  return isUuidLike(id) ? "Cluster" : id;
+}
+
+export function clusterDisplayColor(cluster: ClusterDisplayInput | string | null | undefined): string {
+  if (!cluster) return CLUSTER_META.other.color;
+  if (typeof cluster === "string") return clusterColor(cluster);
+  if (cluster.cluster_name) return clusterColor(cluster.cluster_name);
+  if (typeof cluster.cluster_ordinal === "number") {
+    return CLUSTER_PALETTE[Math.abs(cluster.cluster_ordinal) % CLUSTER_PALETTE.length];
+  }
+  return clusterColor(cluster.cluster_id);
+}
+
 export function hexAlpha(hex: string, alpha: number): string {
   if (!hex.startsWith("#") || (hex.length !== 7 && hex.length !== 4)) {
     return `rgba(0,0,0,${alpha})`;

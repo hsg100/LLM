@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, getLandscapeGraph, Landscape, LandscapePaper, PaperGraph } from "../../../../lib/api";
 import {
   CATEGORY_META,
   Category,
-  clusterColor,
+  clusterDisplayColor,
+  clusterLabel,
   hexAlpha,
 } from "../../../../lib/clusters";
-import RelationshipGraph from "../../../../components/graph/RelationshipGraph";
+import RelationshipGraph, { relationshipGroupLabel } from "../../../../components/graph/RelationshipGraph";
 
 type ClusterGroup = {
   id: string;
@@ -18,75 +20,79 @@ type ClusterGroup = {
   color: string;
   papers: LandscapePaper[];
   avgScore: number;
+  ordinal: number;
 };
+
+type Mode = "learning" | "relationships";
 
 export default function MapPage({ params }: { params: { id: string } }) {
   const [papers, setPapers] = useState<LandscapePaper[]>([]);
   const [synthesis, setSynthesis] = useState<any>({});
-  const [err, setErr] = useState<string | null>(null);
-  const [mode, setMode] = useState<"clusters" | "relationships">("clusters");
   const [graph, setGraph] = useState<PaperGraph | null>(null);
+  const [mode, setMode] = useState<Mode>("learning");
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (mode !== "relationships" || graph) return;
-    getLandscapeGraph(params.id)
-      .then(setGraph)
-      .catch((e: any) => setErr(e.message || "Failed to load relationship graph"));
-  }, [mode, graph, params.id]);
-
-  useEffect(() => {
+    let cancelled = false;
     setErr(null);
     Promise.all([
       apiGet<LandscapePaper[]>(`/api/landscapes/${params.id}/papers`, undefined, 10000),
       apiGet<Landscape>(`/api/landscapes/${params.id}`, undefined, 10000).catch(() => null),
+      getLandscapeGraph(params.id).catch(() => null),
     ])
-      .then(([p, l]) => {
+      .then(([p, l, g]) => {
+        if (cancelled) return;
         setPapers(p);
         setSynthesis(l?.synthesis ?? {});
+        setGraph(g);
       })
-      .catch((e: any) => setErr(e.message || "Failed to load cluster map"));
+      .catch((e: any) => !cancelled && setErr(e.message || "Failed to load field map"));
+    return () => {
+      cancelled = true;
+    };
   }, [params.id]);
-
-  const clusterMeta = useMemo<Record<string, { name: string; summary: string }>>(() => {
-    const out: Record<string, { name: string; summary: string }> = {};
-    const arr = Array.isArray(synthesis.clusters) ? synthesis.clusters : [];
-    for (const c of arr) {
-      const id = c.id || c.name;
-      if (id) out[id] = { name: c.name || id, summary: c.summary || "" };
-    }
-    return out;
-  }, [synthesis]);
 
   const groups = useMemo<ClusterGroup[]>(() => {
     const byCluster: Record<string, LandscapePaper[]> = {};
     for (const p of papers) {
-      const k = p.cluster_id || "other";
+      const k = p.cluster_id || "unclustered";
       (byCluster[k] ||= []).push(p);
     }
     return Object.entries(byCluster)
       .map(([id, items]) => {
         const sorted = [...items].sort((a, b) => b.score - a.score);
+        const first = sorted[0];
         const avgScore =
           sorted.reduce((sum, item) => sum + Number(item.score || 0), 0) / Math.max(1, sorted.length);
         return {
           id,
-          name: clusterMeta[id]?.name || (id === "other" ? "Unclustered papers" : id),
-          summary: clusterMeta[id]?.summary || "",
-          color: clusterColor(id),
+          name: id === "unclustered" ? "Unclustered papers" : clusterLabel(first),
+          summary: first?.cluster_summary || "",
+          color: first ? clusterDisplayColor(first) : "var(--t4)",
           papers: sorted,
           avgScore,
+          ordinal: first?.cluster_ordinal ?? 999,
         };
       })
-      .sort((a, b) => b.avgScore - a.avgScore || b.papers.length - a.papers.length);
-  }, [papers, clusterMeta]);
+      .sort((a, b) => a.ordinal - b.ordinal || b.avgScore - a.avgScore || b.papers.length - a.papers.length);
+  }, [papers]);
 
   const topPapers = useMemo(
     () => [...papers].sort((a, b) => b.score - a.score).slice(0, 6),
     [papers]
   );
+  const relationshipCount = graph?.edges.length ?? 0;
+  const relationshipGroups = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const edge of graph?.edges ?? []) {
+      const label = relationshipGroupLabel(edge.type);
+      counts[label] = (counts[label] || 0) + 1;
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [graph]);
 
   return (
-    <div className="fm-page" style={{ maxWidth: 1220, margin: "0 auto", padding: "30px 40px 72px" }}>
+    <div className="fm-page" style={{ maxWidth: 1240, margin: "0 auto", padding: "30px 40px 72px" }}>
       <div
         style={{
           display: "flex",
@@ -99,15 +105,15 @@ export default function MapPage({ params }: { params: { id: string } }) {
       >
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: 0, margin: "0 0 7px" }}>
-            Cluster map
+            Field map
           </h1>
-          <p style={{ fontSize: 13, color: "var(--t3)", margin: 0, lineHeight: 1.55 }}>
-            Clusters are ranked by average relevance. Open any paper to inspect the grounded notes.
+          <p style={{ fontSize: 13, color: "var(--t3)", margin: 0, lineHeight: 1.55, maxWidth: 680 }}>
+            Use the clusters as your reading lanes, then inspect relationships to see how papers build, compare, and evaluate each other.
           </p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end" }}>
           <div style={{ display: "flex", gap: 4, border: "1px solid var(--bd)", borderRadius: 9, padding: 3, background: "var(--panel)" }}>
-            {(["clusters", "relationships"] as const).map((m) => (
+            {(["learning", "relationships"] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
@@ -121,7 +127,7 @@ export default function MapPage({ params }: { params: { id: string } }) {
                   background: mode === m ? "var(--accent)" : "transparent",
                 }}
               >
-                {m === "clusters" ? "Clusters" : "Relationships"}
+                {m === "learning" ? "Learning path" : "Relationships"}
               </button>
             ))}
           </div>
@@ -131,7 +137,7 @@ export default function MapPage({ params }: { params: { id: string } }) {
           >
             <span>{groups.length} clusters</span>
             <span>{papers.length} papers</span>
-            <span>{graph ? `${graph.edges.length} edges` : `${topPapers.length} highlighted`}</span>
+            <span>{relationshipCount} relationships</span>
           </div>
         </div>
       </div>
@@ -153,57 +159,30 @@ export default function MapPage({ params }: { params: { id: string } }) {
       )}
 
       {mode === "relationships" ? (
-        !graph ? (
-          <div style={{ color: "var(--t3)", fontSize: 13, padding: "20px 0" }}>Loading graph…</div>
-        ) : (
+        graph ? (
           <RelationshipGraph nodes={graph.nodes} edges={graph.edges} landscapeId={params.id} />
+        ) : (
+          <EmptyPanel text="Relationship graph is still loading." />
         )
       ) : groups.length === 0 ? (
-        <div
-          style={{
-            border: "1px dashed var(--bd)",
-            borderRadius: 8,
-            background: "var(--panel)",
-            padding: "22px 24px",
-            color: "var(--t3)",
-            fontSize: 13,
-          }}
-        >
-          No clusters yet for this landscape.
-        </div>
+        <EmptyPanel text="No clusters yet for this landscape." />
       ) : (
-        <div className="fm-map-layout" style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 18 }}>
+        <div className="fm-map-layout" style={{ display: "grid", gridTemplateColumns: "1fr 310px", gap: 18 }}>
           <section
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fit, minmax(285px, 1fr))",
               gap: 14,
               alignItems: "start",
             }}
           >
             {groups.map((group, groupIndex) => (
-              <ClusterLane
-                key={group.id}
-                group={group}
-                index={groupIndex}
-                landscapeId={params.id}
-              />
+              <ClusterLane key={group.id} group={group} index={groupIndex} />
             ))}
           </section>
 
           <aside style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div
-              style={{
-                border: "1px solid var(--bd)",
-                borderRadius: 8,
-                background: "var(--panel)",
-                padding: "16px 17px",
-                boxShadow: "var(--shadow)",
-              }}
-            >
-              <div className="font-mono" style={{ fontSize: 10, color: "var(--t4)", marginBottom: 12 }}>
-                FIELD SNAPSHOT
-              </div>
+            <Panel title="Field snapshot">
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {groups.map((g) => (
                   <div key={g.id}>
@@ -226,20 +205,26 @@ export default function MapPage({ params }: { params: { id: string } }) {
                   </div>
                 ))}
               </div>
-            </div>
+            </Panel>
 
-            <div
-              style={{
-                border: "1px solid var(--bd)",
-                borderRadius: 8,
-                background: "var(--panel)",
-                padding: "16px 17px",
-                boxShadow: "var(--shadow)",
-              }}
-            >
-              <div className="font-mono" style={{ fontSize: 10, color: "var(--t4)", marginBottom: 12 }}>
-                HIGHEST SIGNAL
-              </div>
+            <Panel title="Relationship evidence">
+              {relationshipCount === 0 ? (
+                <div style={{ fontSize: 12.5, color: "var(--t3)", lineHeight: 1.45 }}>
+                  No paper-to-paper relationships were generated yet. The cluster lanes still provide the reading structure.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                  {relationshipGroups.map(([label, count]) => (
+                    <div key={label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                      <span style={{ fontSize: 12.5, color: "var(--t2)" }}>{label}</span>
+                      <span className="font-mono" style={{ fontSize: 11, color: "var(--t4)" }}>{count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+
+            <Panel title="Highest signal">
               <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                 {topPapers.map((p, i) => (
                   <Link
@@ -253,7 +238,7 @@ export default function MapPage({ params }: { params: { id: string } }) {
                       textDecoration: "none",
                     }}
                   >
-                    <span className="font-mono" style={{ color: clusterColor(p.cluster_id), fontSize: 11 }}>
+                    <span className="font-mono" style={{ color: clusterDisplayColor(p), fontSize: 11 }}>
                       {String(i + 1).padStart(2, "0")}
                     </span>
                     <span style={{ fontSize: 12.5, color: "var(--t2)", lineHeight: 1.35 }}>
@@ -262,7 +247,7 @@ export default function MapPage({ params }: { params: { id: string } }) {
                   </Link>
                 ))}
               </div>
-            </div>
+            </Panel>
           </aside>
         </div>
       )}
@@ -270,14 +255,7 @@ export default function MapPage({ params }: { params: { id: string } }) {
   );
 }
 
-function ClusterLane({
-  group,
-  index,
-}: {
-  group: ClusterGroup;
-  index: number;
-  landscapeId: string;
-}) {
+function ClusterLane({ group, index }: { group: ClusterGroup; index: number }) {
   return (
     <article
       style={{
@@ -290,7 +268,7 @@ function ClusterLane({
     >
       <div
         style={{
-          padding: "14px 15px",
+          padding: "15px 16px",
           borderBottom: "1px solid var(--bd)",
           background: hexAlpha(group.color, 0.1),
         }}
@@ -299,23 +277,21 @@ function ClusterLane({
           <span className="font-mono" style={{ color: group.color, fontSize: 11 }}>
             C{index + 1}
           </span>
-          <h2 style={{ flex: 1, fontSize: 14, fontWeight: 600, letterSpacing: 0, margin: 0 }}>
+          <h2 style={{ flex: 1, fontSize: 14, fontWeight: 650, letterSpacing: 0, margin: 0 }}>
             {group.name}
           </h2>
           <span className="font-mono" style={{ fontSize: 10.5, color: "var(--t4)" }}>
             {group.papers.length}
           </span>
         </div>
-        {group.summary && (
-          <p style={{ fontSize: 12, color: "var(--t3)", lineHeight: 1.45, margin: 0 }}>
-            {group.summary}
-          </p>
-        )}
+        <p style={{ fontSize: 12, color: "var(--t3)", lineHeight: 1.45, margin: 0 }}>
+          {group.summary || "A generated reading lane for papers with similar methods, questions, or evidence."}
+        </p>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column" }}>
         {group.papers.slice(0, 8).map((p) => {
-          const category = CATEGORY_META[(p.category as Category) ?? "optional"];
+          const category = CATEGORY_META[(p.category as Category) ?? "optional"] ?? CATEGORY_META.optional;
           return (
             <Link
               key={p.paper.id}
@@ -360,28 +336,61 @@ function ClusterLane({
                     color: "var(--t3)",
                   }}
                 >
-                  <span>{p.paper.year ?? "unknown year"}</span>
-                  <span
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      background: category?.color ?? "var(--t4)",
-                    }}
-                  />
-                  <span>{category?.label ?? p.category}</span>
+                  <span style={{ color: category.color }}>{category.label}</span>
+                  <span>{p.paper.year ?? "year n/a"}</span>
+                  {p.rationale && <span>{shortTitle(p.rationale, 70)}</span>}
                 </div>
               </div>
             </Link>
           );
         })}
+        {group.papers.length > 8 && (
+          <div style={{ padding: "10px 15px 13px", fontSize: 11.5, color: "var(--t4)" }}>
+            +{group.papers.length - 8} more in this lane
+          </div>
+        )}
       </div>
     </article>
   );
 }
 
-function shortTitle(title: string, max: number): string {
-  const clean = (title || "Untitled paper").replace(/\s+/g, " ").trim();
-  if (clean.length <= max) return clean;
-  return `${clean.slice(0, Math.max(0, max - 1)).trim()}...`;
+function Panel({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div
+      style={{
+        border: "1px solid var(--bd)",
+        borderRadius: 8,
+        background: "var(--panel)",
+        padding: "16px 17px",
+        boxShadow: "var(--shadow)",
+      }}
+    >
+      <div className="font-mono" style={{ fontSize: 10, color: "var(--t4)", marginBottom: 12, textTransform: "uppercase" }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function EmptyPanel({ text }: { text: string }) {
+  return (
+    <div
+      style={{
+        border: "1px dashed var(--bd)",
+        borderRadius: 8,
+        background: "var(--panel)",
+        padding: "22px 24px",
+        color: "var(--t3)",
+        fontSize: 13,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+function shortTitle(title: string | null | undefined, n: number): string {
+  const s = title || "Untitled";
+  return s.length > n ? `${s.slice(0, n - 1)}...` : s;
 }

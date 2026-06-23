@@ -172,6 +172,9 @@ export type LandscapePaper = {
   category: "must-read" | "useful" | "optional" | "skip-for-now";
   rationale: string | null;
   cluster_id: string | null;
+  cluster_name: string | null;
+  cluster_summary: string | null;
+  cluster_ordinal: number | null;
   reading_order: number | null;
 };
 
@@ -351,6 +354,9 @@ export type GraphNode = {
   score: number;
   category: string;
   cluster_id: string | null;
+  cluster_name: string | null;
+  cluster_summary: string | null;
+  cluster_ordinal: number | null;
 };
 
 export type GraphEdge = {

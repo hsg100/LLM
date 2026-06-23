@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { apiGet, Landscape, LandscapePaper, uploadPaper } from "../../../../lib/api";
+import { apiGet, LandscapePaper, uploadPaper } from "../../../../lib/api";
 import {
   CATEGORY_META,
   Category,
   categoryBg,
-  clusterColor,
+  clusterDisplayColor,
+  clusterLabel,
   confidenceColor,
 } from "../../../../lib/clusters";
 
@@ -15,7 +16,6 @@ type SortKey = "score" | "year" | "cites";
 
 export default function PapersPage({ params }: { params: { id: string } }) {
   const [papers, setPapers] = useState<LandscapePaper[]>([]);
-  const [synthesis, setSynthesis] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>("score");
@@ -52,14 +52,10 @@ export default function PapersPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      apiGet<LandscapePaper[]>(`/api/landscapes/${params.id}/papers`),
-      apiGet<Landscape>(`/api/landscapes/${params.id}`).catch(() => null),
-    ])
-      .then(([p, l]) => {
+    apiGet<LandscapePaper[]>(`/api/landscapes/${params.id}/papers`)
+      .then((p) => {
         if (cancelled) return;
         setPapers(p);
-        setSynthesis(l?.synthesis ?? {});
       })
       .catch((e) => !cancelled && setErr(e.message || String(e)))
       .finally(() => !cancelled && setLoading(false));
@@ -67,16 +63,6 @@ export default function PapersPage({ params }: { params: { id: string } }) {
       cancelled = true;
     };
   }, [params.id]);
-
-  const clusterNameById = useMemo<Record<string, string>>(() => {
-    const out: Record<string, string> = {};
-    const arr = Array.isArray(synthesis.clusters) ? synthesis.clusters : [];
-    for (const c of arr) {
-      if (c.id) out[c.id] = c.name;
-      if (c.name) out[c.name] = c.name;
-    }
-    return out;
-  }, [synthesis]);
 
   const sorted = useMemo(() => {
     const cmp: Record<SortKey, (a: LandscapePaper, b: LandscapePaper) => number> = {
@@ -247,11 +233,8 @@ export default function PapersPage({ params }: { params: { id: string } }) {
           {sorted.map((p, i) => {
             const cat = (p.category as Category) ?? "optional";
             const meta = CATEGORY_META[cat] ?? CATEGORY_META.optional;
-            const clColor = clusterColor(p.cluster_id);
-            const clName =
-              (p.cluster_id && clusterNameById[p.cluster_id]) ||
-              p.cluster_id ||
-              "—";
+            const clColor = clusterDisplayColor(p);
+            const clName = p.cluster_id ? clusterLabel(p) : "—";
             const scorePct = Math.round(p.score * 100);
             return (
               <Link
