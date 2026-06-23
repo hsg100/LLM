@@ -47,6 +47,9 @@ from app.models import (
     SearchJob,
 )
 from app.schemas import (
+    AnnotateRequest,
+    AnnotateResponse,
+    AnnotatedTextSegment,
     ConceptDetailOut,
     ConceptMapOut,
     ConceptOut,
@@ -72,7 +75,7 @@ from app.schemas import (
     Extraction as ExtractionSchema,
 )
 from app.runtime_settings import EDITABLE_FIELDS, effective_settings, set_overrides
-from app.services.concepts import build_concept_map, concept_slug, concept_to_dict
+from app.services.concepts import annotate_text, build_concept_map, concept_slug, concept_to_dict
 from app.services.pdf_storage import resolve_pdf_storage_path
 from app.services.review import (
     ReviewError,
@@ -206,6 +209,25 @@ def get_landscape_concepts(landscape_id: str, s: Session = Depends(get_session))
         raise HTTPException(404, "landscape not found")
     rows = _concept_rows(s, landscape_id)
     return [ConceptOut.model_validate(concept_to_dict(c)) for c in rows]
+
+
+@router.post("/landscapes/{landscape_id}/annotate", response_model=AnnotateResponse)
+def annotate_landscape_text(
+    landscape_id: str, body: AnnotateRequest, s: Session = Depends(get_session)
+) -> AnnotateResponse:
+    """Canonical, server-rendered concept annotation (single source of truth).
+
+    The client passes raw text blocks and consumes the returned segments; the
+    Python ``annotate_text`` is the only annotation implementation.
+    """
+    if s.get(Landscape, landscape_id) is None:
+        raise HTTPException(404, "landscape not found")
+    concepts = [concept_to_dict(c) for c in _concept_rows(s, landscape_id)]
+    results = [
+        [AnnotatedTextSegment(**seg) for seg in annotate_text(text or "", concepts)]
+        for text in body.texts
+    ]
+    return AnnotateResponse(results=results)
 
 
 @router.get("/landscapes/{landscape_id}/concepts/{slug}", response_model=ConceptDetailOut)

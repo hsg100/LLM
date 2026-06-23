@@ -4,53 +4,96 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Concept } from "../../lib/api";
+import { getSegments, Segment } from "../../lib/annotation";
 
-type Segment =
+type Resolved =
   | { type: "text"; text: string }
-  | { type: "concept"; text: string; concept: Concept };
+  | { type: "concept"; text: string; slug: string; concept: Concept | null; definition: string };
 
 export default function ConceptText({
   text,
   concepts,
   landscapeId,
   className,
+  segments: provided,
 }: {
   text: string;
   concepts: Concept[];
   landscapeId: string;
   className?: string;
+  segments?: Segment[];
 }) {
   const [active, setActive] = useState<Concept | null>(null);
   const [mounted, setMounted] = useState(false);
-  const segments = useMemo(() => annotate(text || "", concepts || []), [text, concepts]);
+  const [segments, setSegments] = useState<Segment[] | null>(provided ?? null);
+
+  const bySlug = useMemo(() => {
+    const m = new Map<string, Concept>();
+    for (const c of concepts || []) m.set(c.slug, c);
+    return m;
+  }, [concepts]);
 
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (provided) {
+      setSegments(provided);
+      return;
+    }
+    let cancelled = false;
+    // Server is the single source of truth; render plain text until it resolves.
+    getSegments(landscapeId, text || "")
+      .then((segs) => {
+        if (!cancelled) setSegments(segs);
+      })
+      .catch(() => {
+        if (!cancelled) setSegments([{ type: "text", text: text || "" }]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [text, landscapeId, provided]);
+
+  const resolved: Resolved[] = useMemo(() => {
+    const segs = segments ?? [{ type: "text", text: text || "" }];
+    return segs.map((seg) => {
+      if (seg.type === "text") return { type: "text", text: seg.text };
+      const concept = bySlug.get(seg.concept_slug) ?? null;
+      return {
+        type: "concept",
+        text: seg.text,
+        slug: seg.concept_slug,
+        concept,
+        definition: concept?.short_definition || seg.definition || "",
+      };
+    });
+  }, [segments, bySlug, text]);
 
   if (!text) return null;
 
   return (
     <span className={className}>
-      {segments.map((seg, i) => {
+      {resolved.map((seg, i) => {
         if (seg.type === "text") return <span key={i}>{seg.text}</span>;
-        const href = `/landscape/${landscapeId}/concepts/${seg.concept.slug}`;
+        const href = `/landscape/${landscapeId}/concepts/${seg.slug}`;
         return (
-          <span key={`${seg.concept.slug}-${i}`} className="fm-concept-wrap">
+          <span key={`${seg.slug}-${i}`} className="fm-concept-wrap">
             <button
               type="button"
               className="fm-concept-term"
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                setActive(seg.concept);
+                if (seg.concept) setActive(seg.concept);
               }}
-              onFocus={() => setActive(seg.concept)}
-              aria-label={`${seg.text}: ${seg.concept.short_definition}`}
+              onFocus={() => seg.concept && setActive(seg.concept)}
+              aria-label={`${seg.text}: ${seg.definition}`}
             >
               {seg.text}
             </button>
             <span className="fm-concept-popover" role="tooltip">
-              <strong>{seg.concept.term}</strong>
-              <span>{seg.concept.short_definition}</span>
+              <strong>{seg.concept?.term ?? seg.text}</strong>
+              <span>{seg.definition}</span>
               <Link href={href}>Open concept</Link>
             </span>
           </span>
@@ -117,87 +160,4 @@ export default function ConceptText({
         : null}
     </span>
   );
-}
-
-function annotate(text: string, concepts: Concept[]): Segment[] {
-  const matchers = concepts
-    .filter((c) => (c.confidence ?? 0) >= 0.55)
-    .flatMap((c) => [c.term, ...(c.aliases || [])].map((term) => ({ term: clean(term), concept: c })))
-    .filter((x) => x.term && !isGeneric(x.term))
-    .sort((a, b) => b.term.length - a.term.length);
-  if (!matchers.length) return [{ type: "text", text }];
-
-  const protectedRanges = rangesForMarkdown(text);
-  const paragraphRanges = paragraphs(text);
-  const occupied: [number, number][] = [];
-  const seen = new Set<string>();
-  const matches: { start: number; end: number; concept: Concept }[] = [];
-
-  for (const matcher of matchers) {
-    const pattern = new RegExp(`(^|[^\\w-])(${escapeRegex(matcher.term).replace(/\\ /g, "\\s+")})(?![\\w-])`, "gi");
-    let m: RegExpExecArray | null;
-    while ((m = pattern.exec(text))) {
-      const start = m.index + (m[1]?.length || 0);
-      const end = start + m[2].length;
-      if (matches.length >= 24) break;
-      if (overlaps(start, end, protectedRanges) || overlaps(start, end, occupied)) continue;
-      const para = paragraphIndex(start, paragraphRanges);
-      const key = `${para}:${matcher.concept.slug}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      occupied.push([start, end]);
-      matches.push({ start, end, concept: matcher.concept });
-    }
-  }
-
-  if (!matches.length) return [{ type: "text", text }];
-  matches.sort((a, b) => a.start - b.start);
-  const out: Segment[] = [];
-  let pos = 0;
-  for (const match of matches) {
-    if (match.start > pos) out.push({ type: "text", text: text.slice(pos, match.start) });
-    out.push({ type: "concept", text: text.slice(match.start, match.end), concept: match.concept });
-    pos = match.end;
-  }
-  if (pos < text.length) out.push({ type: "text", text: text.slice(pos) });
-  return out;
-}
-
-function clean(term: string): string {
-  return String(term || "").replace(/\s+/g, " ").trim().replace(/^[\s:;,.()[\]{}-]+|[\s:;,.()[\]{}-]+$/g, "");
-}
-
-function isGeneric(term: string): boolean {
-  const generic = new Set(["approach", "data", "dataset", "evaluation", "method", "model", "paper", "result", "results", "system", "task"]);
-  const words = term.toLowerCase().split(/\s+/);
-  return !term || term.length < 3 || words.length > 8 || (words.length === 1 && generic.has(words[0]));
-}
-
-function rangesForMarkdown(text: string): [number, number][] {
-  const patterns = [/```[\s\S]*?```/g, /`[^`\n]+`/g, /\[[^\]]+\]\([^)]+\)/g, /^#{1,6}\s.*$/gm];
-  return patterns.flatMap((pattern) => Array.from(text.matchAll(pattern), (m) => [m.index || 0, (m.index || 0) + m[0].length] as [number, number]));
-}
-
-function paragraphs(text: string): [number, number][] {
-  const out: [number, number][] = [];
-  let start = 0;
-  for (const m of text.matchAll(/\n\s*\n/g)) {
-    out.push([start, m.index || 0]);
-    start = (m.index || 0) + m[0].length;
-  }
-  out.push([start, text.length]);
-  return out;
-}
-
-function paragraphIndex(pos: number, ranges: [number, number][]): number {
-  const idx = ranges.findIndex(([start, end]) => start <= pos && pos <= end);
-  return idx >= 0 ? idx : ranges.length;
-}
-
-function overlaps(start: number, end: number, ranges: [number, number][]): boolean {
-  return ranges.some(([a, b]) => start < b && end > a);
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

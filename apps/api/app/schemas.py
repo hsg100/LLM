@@ -288,6 +288,14 @@ class AnnotatedTextSegment(BaseModel):
     definition: Optional[str] = None
 
 
+class AnnotateRequest(BaseModel):
+    texts: list[str] = Field(default_factory=list, max_length=64)
+
+
+class AnnotateResponse(BaseModel):
+    results: list[list[AnnotatedTextSegment]]
+
+
 # ---------------------------------------------------------------------------
 # Quiz + flashcards
 # ---------------------------------------------------------------------------
