@@ -1127,6 +1127,15 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
   switchable in ≤1 click (context card + ⌘K); scoped actions are visibly unavailable until a
   landscape exists; jobs are reachable for any run via `/jobs`.
 
+### Sprint 9 — Product polish, learning guidance & AI assist
+
+See [`SPRINT_09_PRODUCT_POLISH_AND_LEARNING_ASSIST.md`](./SPRINT_09_PRODUCT_POLISH_AND_LEARNING_ASSIST.md).
+
+> **Goal:** Fix visible product bugs and turn the app's learning surfaces into a
+> more useful tutor-like experience: favicon, jobs endpoint reachability,
+> semantic cluster naming, slower and richer trending/suggested topics,
+> readable flashcards, polished concept popups, and highlight-to-Ask-AI.
+
 ---
 
 ### Dependency summary
