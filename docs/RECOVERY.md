@@ -1072,6 +1072,53 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 - **Acceptance:** one annotation source of truth; export is a discoverable step
   in the loop; pages componentized; interactive graphs render.
 
+### Sprint 8 — Navigation, information architecture & app shell *(new; closes the IA gaps in §3.12)*
+
+> **Goal:** A coherent two-scope shell where global vs. landscape-scoped actions
+> are obvious, the active landscape is always indicated, and switching/exiting a
+> landscape is one click.
+>
+> **Status: partially implemented.** The headline fix shipped:
+> `components/shell/Sidebar.tsx` was reworked into two explicit scopes — a GLOBAL
+> group (All landscapes / New landscape / Settings) that always works, and a
+> CURRENT-LANDSCAPE group (Overview, Cluster map, Papers, Reading plan, Quiz,
+> Flashcards, **Review**, Obsidian export) that is **locked (greyed + lock icon)
+> when no landscape is selected** and otherwise targets the resolved landscape.
+> A **context card** now always shows which landscape the scoped section targets
+> (name + status), distinguishes "current" (you're inside it) from "recent"
+> (remembered via `lib/landscape/recent`, shared with the mobile bottom bar), and
+> gives a one-click **✕ exit / switch** back to all landscapes. The misleading
+> global **"Job monitor → /landscapes"** item was removed; the **Review** route
+> (shipped Sprint 6 but never linked) was added; the **Topbar Export CTA** no
+> longer dead-links when no landscape is active. `next build` green.
+
+**Audit findings (the "issues like this"):**
+
+| # | Finding | Severity | State |
+|---|---------|----------|-------|
+| 1 | Sidebar showed 7 landscape-scoped items globally; dead-linked to `/landscapes` with no landscape; no active-landscape indicator; clunky exit. | 🐞/🎯 | **Fixed** (this sprint) |
+| 2 | "Job monitor" linked to `/landscapes`, not a job — and there is **no global Jobs index**; `/jobs/{id}` is only reachable from the create flow (`Landscape` carries no job id, so a running landscape's job can't be re-opened). | 🐞/🎯 | Removed misleading item; **index still TODO** |
+| 3 | The `/landscape/[id]/review` screen (Sprint 6) was missing from the sidebar entirely. | 🎯 | **Fixed** |
+| 4 | Topbar Export CTA dead-linked to `/landscapes` when no landscape was active. | ⚠️ | **Fixed** |
+| 5 | No landscape **switcher** — changing landscapes means going to `/landscapes` and clicking. Context card "switch" links there; a dropdown/command-palette switch is the full fix. | ⚠️ | TODO |
+| 6 | `FakeSearch` ⌘K box is **non-functional** (visual only). A real command palette (jump to landscape / page / paper) is the proper cure for switching clunk. | 🎯 | TODO |
+| 7 | `/` redirects to `/search` (the create form) as "home"; the truer home is `/landscapes`. Breadcrumb `leftHref` bounces through the redirect. | ⚠️ | TODO |
+| 8 | **Design-system** link is exposed in production nav (dev-only tool). | ⚠️ | TODO (gate behind `NODE_ENV`/flag) |
+| 9 | Mobile `BottomTabBar` routes scoped tabs to `/landscapes` when no landscape (same root cause as #1); should mirror the locked/disabled treatment. | ⚠️ | TODO |
+| 10 | Giant page components (landscape ~1014 / paper ~988 / jobs ~738) mix fetch+state+view — already logged under Sprint 7 deferred; revisit alongside shell work. | ⚠️ | Deferred (Sprint 7) |
+
+**Planned scope (remaining):**
+- **Global Jobs index** + per-landscape "current job" link (expose latest `job_id` on
+  the landscape, or add `GET /landscapes/{id}/jobs`); make "Job monitor" resolve.
+- **Command palette (⌘K)**: fuzzy jump to landscape / scoped page / paper; doubles as the
+  landscape switcher.
+- **Home semantics**: point `/` and the topbar root crumb at `/landscapes`.
+- **Gate the design-system route** out of production nav.
+- **Mobile parity**: lock/disable scoped bottom-tabs when no landscape.
+- **Acceptance:** no nav item ever dead-links; the active landscape is always visible and
+  switchable in ≤1 click; scoped actions are visibly unavailable until a landscape exists;
+  jobs are reachable for any running landscape.
+
 ---
 
 ### Dependency summary
