@@ -1086,8 +1086,10 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 > the landscape switcher; `/` now lands on `/landscapes` (workspace, not the
 > create form); the design-system link is gated out of production nav. Backend
 > 110 tests pass (incl. a jobs-index test); ruff clean; `next build` green.
-> Remaining minor follow-up: mobile bottom-tab parity (scoped tabs still fall
-> back to `/landscapes` when no landscape — not dead, just not locked).
+> Mobile parity is now done too: the bottom-tab scoped tabs (Read/Learn/Map) are
+> muted + locked (with a tap that routes to the landscape picker) when no
+> landscape is selected, mirroring the desktop sidebar. **All 10 audit items are
+> resolved.**
 >
 > The headline fix shipped first:
 > `components/shell/Sidebar.tsx` was reworked into two explicit scopes — a GLOBAL
@@ -1115,12 +1117,10 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 | 6 | `FakeSearch` ⌘K box was **non-functional** (visual only). | 🎯 | **Fixed** — real command palette (⌘K / topbar / `fm:open-cmdk`) |
 | 7 | `/` redirected to `/search` (the create form) as "home"; the truer home is `/landscapes`. | ⚠️ | **Fixed** — `/` → `/landscapes` |
 | 8 | **Design-system** link exposed in production nav (dev-only tool). | ⚠️ | **Fixed** — gated behind `NODE_ENV !== "production"` |
-| 9 | Mobile `BottomTabBar` routes scoped tabs to `/landscapes` when no landscape (same root cause as #1); should mirror the locked/disabled treatment. | ⚠️ | Minor follow-up (fallback is not dead, just unlocked) |
+| 9 | Mobile `BottomTabBar` routed scoped tabs to `/landscapes` when no landscape (same root cause as #1); should mirror the locked/disabled treatment. | ⚠️ | **Fixed** — scoped tabs muted + locked, tap routes to the picker |
 | 10 | Giant page components (landscape ~1014 / paper ~988 / jobs ~738) mix fetch+state+view — already logged under Sprint 7 deferred; revisit alongside shell work. | ⚠️ | Deferred (Sprint 7) |
 
-**Remaining follow-up:**
-- **Mobile parity**: lock/disable scoped bottom-tabs when no landscape (desktop sidebar
-  already does this); today they fall back to `/landscapes` (not dead, just unlocked).
+**Remaining follow-up (nice-to-haves):**
 - `GET /api/jobs?landscape_id=` exists and the index covers reachability; a per-landscape
   "current job" shortcut on the Overview page is a nice-to-have on top.
 - **Acceptance (met):** no nav item dead-links; the active landscape is always visible and
