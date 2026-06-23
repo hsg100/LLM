@@ -243,6 +243,34 @@ For topic `RAG evaluation` a user gets:
 - Git-backed Obsidian markdown export (button on landscape page →
   `POST /api/landscapes/{id}/export/obsidian`)
 
+## Topic guard (fast fail)
+
+FieldMap maps ML/AI **research** fields. To stop the pipeline being spammed
+with off-topic queries (video games, social-media personalities, sports,
+celebrities) — each of which would otherwise burn a full search + embed +
+parse + LLM run and leave a junk landscape — `POST /api/landscapes` runs a
+cheap deterministic gate (`app/services/topic_guard.py`) **before** creating any
+rows or enqueuing work:
+
+- structural sanity (empty/too-short, no letters, gibberish/symbol spam);
+- an off-topic blocklist (e.g. `gta`, `bonnie blue`, `fortnite`, `taylor swift`)
+  that is skipped when the topic contains genuine research vocabulary, so
+  `reinforcement learning in Minecraft` passes while bare `gta` is rejected.
+
+Rejected topics return `HTTP 422` with a human-readable reason (surfaced inline
+on the `/search` page). No LLM is involved, so the check is effectively free.
+
+To purge off-topic landscapes that predate the guard:
+
+```bash
+# preview (no changes)
+docker compose exec api python -m app.scripts.purge_offtopic_landscapes
+# delete them, cascading jobs/clusters/concepts/quizzes/etc (shared papers kept)
+docker compose exec api python -m app.scripts.purge_offtopic_landscapes --apply
+# force-remove specific topics
+docker compose exec api python -m app.scripts.purge_offtopic_landscapes --topic "gta" --apply
+```
+
 ## Prompt safety
 
 All extraction / synthesis / quiz prompts include explicit instructions

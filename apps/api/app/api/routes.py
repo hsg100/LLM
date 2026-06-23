@@ -87,6 +87,7 @@ from app.services.review import (
     get_weak_areas,
     submit_review,
 )
+from app.services.topic_guard import evaluate_topic
 from app.services.uploads import ingest_uploaded_pdf, looks_like_pdf
 from app.users import DEFAULT_USER_ID
 from app.workers.landscape_job import job_channel, run_landscape_job
@@ -101,8 +102,14 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 @router.post("/landscapes", response_model=dict)
 def create_landscape(body: LandscapeCreate, s: Session = Depends(get_session)) -> dict[str, str]:
+    # Fast fail: reject off-topic / spam topics before creating any rows or
+    # enqueuing the (expensive) pipeline. See app.services.topic_guard.
+    verdict = evaluate_topic(body.topic)
+    if not verdict.ok:
+        raise HTTPException(422, verdict.reason)
+
     landscape = Landscape(
-        topic=body.topic,
+        topic=verdict.normalized,
         user_id=DEFAULT_USER_ID,
         settings={
             "max_papers": body.max_papers or effective_settings().max_papers_per_landscape,
