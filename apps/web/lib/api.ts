@@ -143,6 +143,7 @@ export type SettingsPatch = {
   llm_model_strong?: string;
   max_papers_per_landscape?: number;
   obsidian_export_auto_push?: boolean;
+  obsidian_auto_export?: boolean;
 };
 
 export async function updateSettings(patch: SettingsPatch): Promise<any> {

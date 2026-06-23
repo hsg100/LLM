@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     obsidian_export_repo_path: str = "/data/obsidian"
     obsidian_export_git_remote: str = ""
     obsidian_export_auto_push: bool = False
+    obsidian_auto_export: bool = False  # export on pipeline completion (opt-in)
     obsidian_export_author_name: str = "FieldMap Bot"
     obsidian_export_author_email: str = "fieldmap@local"
 

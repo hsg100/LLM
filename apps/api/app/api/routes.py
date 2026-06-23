@@ -27,8 +27,6 @@ from app.exporters.obsidian_git import (
     get_configured_repo_root,
     make_repo_root,
     preview_plan,
-    render_landscape_export,
-    write_plan,
 )
 from app.models import (
     Chunk,
@@ -38,7 +36,6 @@ from app.models import (
     JobEvent,
     Landscape,
     LandscapePaper,
-    ObsidianExport,
     Paper,
     PaperPdf,
     PaperRelationship,
@@ -76,6 +73,11 @@ from app.schemas import (
 )
 from app.runtime_settings import EDITABLE_FIELDS, effective_settings, set_overrides
 from app.services.concepts import annotate_text, build_concept_map, concept_slug, concept_to_dict
+from app.services.export_service import (
+    ExportError,
+    build_landscape_export_plan,
+    write_landscape_export,
+)
 from app.services.pdf_storage import resolve_pdf_storage_path
 from app.services.review import (
     ReviewError,
@@ -692,6 +694,7 @@ def get_settings_route() -> SettingsOut:
         embedding_dim=s.embedding_dim,
         obsidian_export_repo_path=s.obsidian_export_repo_path,
         obsidian_export_auto_push=s.obsidian_export_auto_push,
+        obsidian_auto_export=s.obsidian_auto_export,
         max_papers_per_landscape=s.max_papers_per_landscape,
         has_openai_key=bool(s.openai_api_key),
         has_deepseek_key=bool(s.deepseek_api_key),
@@ -716,48 +719,19 @@ def patch_settings(body: SettingsPatch) -> SettingsOut:
 # ---------------------------------------------------------------------------
 @router.post("/landscapes/{landscape_id}/export/obsidian", response_model=ExportResult)
 def export_obsidian(landscape_id: str, body: ExportRequest, s: Session = Depends(get_session)) -> ExportResult:
-    landscape, plan, root = _build_export_plan(landscape_id, s, create_root=True)
+    root = _resolve_export_root(create=True)
     push = body.push if body.push is not None else effective_settings().obsidian_export_auto_push
     try:
-        written, hashes, commit_sha, pushed = write_plan(
-            plan,
-            root=root,
-            commit_message=f"fieldmap: export landscape '{landscape.topic}' ({datetime.utcnow().isoformat()}Z)",
-            push=push,
-            force=body.force,
-        )
+        result = write_landscape_export(s, landscape_id, root=root, push=push, force=body.force)
+    except ExportError as e:
+        raise HTTPException(e.status, e.message)
     except Exception as e:
         raise HTTPException(
             500,
             f"obsidian export failed: {type(e).__name__}: {e}. "
             "Check that the configured repo path exists, is writable, and is a git working tree.",
         )
-
-    # Record obsidian_exports rows.
-    for rel, digest in hashes:
-        existing = s.exec(
-            select(ObsidianExport).where(
-                ObsidianExport.landscape_id == landscape_id,
-                ObsidianExport.file_path == rel,
-            )
-        ).first()
-        if existing is None:
-            s.add(
-                ObsidianExport(
-                    landscape_id=landscape_id,
-                    file_path=rel,
-                    content_hash=digest,
-                    commit_sha=commit_sha,
-                    pushed=pushed,
-                )
-            )
-        else:
-            existing.content_hash = digest
-            existing.commit_sha = commit_sha
-            existing.pushed = pushed
-            s.add(existing)
-
-    return ExportResult(files=written, commit_sha=commit_sha, pushed=pushed)
+    return ExportResult(files=result["files"], commit_sha=result["commit_sha"], pushed=result["pushed"])
 
 
 @router.get("/landscapes/{landscape_id}/export/preview", response_model=ExportPreviewOut)
@@ -770,79 +744,12 @@ def export_preview_post(landscape_id: str, body: ExportRequest, s: Session = Dep
     return _export_preview(landscape_id, body.force, s)
 
 
-def _export_preview(landscape_id: str, force: bool, s: Session) -> ExportPreviewOut:
-    _landscape, plan, root = _build_export_plan(landscape_id, s, create_root=False)
+def _resolve_export_root(*, create: bool):  # type: ignore[no-untyped-def]
+    """Resolve (and optionally create) the configured Obsidian repo root."""
     try:
-        preview = preview_plan(plan, root=root, force=force)
-    except Exception as e:
-        raise HTTPException(400, f"obsidian export preview failed: {type(e).__name__}: {e}")
-    return ExportPreviewOut(**preview.__dict__)
-
-
-def _build_export_plan(landscape_id: str, s: Session, *, create_root: bool):  # type: ignore[no-untyped-def]
-    landscape = s.get(Landscape, landscape_id)
-    if landscape is None:
-        raise HTTPException(404, "landscape not found")
-
-    links = s.exec(
-        select(LandscapePaper).where(LandscapePaper.landscape_id == landscape_id)
-    ).all()
-    if not links:
-        raise HTTPException(400, "landscape has no papers — run the pipeline first")
-
-    paper_ids = [link.paper_id for link in links]
-    papers = _papers_by_id(s, paper_ids)
-    ext_rows = s.exec(select(Extraction).where(Extraction.paper_id.in_(paper_ids))).all() if paper_ids else []
-    ext_by_paper = {e.paper_id: e for e in ext_rows}
-    pdf_rows = s.exec(select(PaperPdf).where(PaperPdf.paper_id.in_(paper_ids))).all() if paper_ids else []
-    pdf_by_paper = {p.paper_id: p for p in pdf_rows}
-
-    landscape_papers: list[dict[str, Any]] = []
-    extractions_by_paper: dict[str, dict[str, Any]] = {}
-    for link in links:
-        paper = papers.get(link.paper_id)
-        if paper is None:
-            continue
-        ext = ext_by_paper.get(link.paper_id)
-        if ext:
-            extractions_by_paper[paper.id] = ext.data
-        pdf_path = _pdf_file_path(pdf_by_paper.get(paper.id))
-        landscape_papers.append(
-            {
-                "paper_id": paper.id,
-                "title": paper.title,
-                "year": paper.year,
-                "venue": paper.venue,
-                "authors": paper.authors,
-                "url": paper.url,
-                "pdf_url": paper.pdf_url,
-                "pdf_filename": pdf_path.name if pdf_path else None,
-                "pdf_source_path": str(pdf_path) if pdf_path else None,
-                "arxiv_id": paper.arxiv_id,
-                "category": link.category,
-                "score": link.score,
-                "rationale": link.rationale,
-            }
-        )
-
-    quizzes = [
-        {
-            "question": q.question,
-            "options": q.options,
-            "correct_index": q.correct_index,
-            "explanation": q.explanation,
-        }
-        for q in s.exec(select(Quiz).where(Quiz.landscape_id == landscape_id)).all()
-    ]
-    flashcards = [
-        {"front": f.front, "back": f.back, "kind": f.kind} for f in s.exec(select(Flashcard).where(Flashcard.landscape_id == landscape_id)).all()
-    ]
-    concepts = [concept_to_dict(c) for c in _concept_rows(s, landscape_id)]
-
-    try:
-        root = get_configured_repo_root(create=create_root)
-        if create_root:
-            root = make_repo_root()
+        if create:
+            return make_repo_root()
+        return get_configured_repo_root(create=False)
     except PermissionError as e:
         raise HTTPException(
             500,
@@ -855,19 +762,18 @@ def _build_export_plan(landscape_id: str, s: Session, *, create_root: bool):  # 
             f"obsidian export path error ({get_settings().obsidian_export_repo_path}): {e}.",
         )
 
-    plan = render_landscape_export(
-        topic=landscape.topic,
-        landscape_id=landscape_id,
-        synthesis=landscape.synthesis or {},
-        landscape_papers=landscape_papers,
-        quizzes=quizzes,
-        flashcards=flashcards,
-        extractions_by_paper=extractions_by_paper,
-        concepts=concepts,
-        root=root,
-        generated_at=landscape.updated_at.isoformat() + "Z",
-    )
-    return landscape, plan, root
+
+def _export_preview(landscape_id: str, force: bool, s: Session) -> ExportPreviewOut:
+    root = _resolve_export_root(create=False)
+    try:
+        _landscape, plan = build_landscape_export_plan(s, landscape_id, root=root)
+    except ExportError as e:
+        raise HTTPException(e.status, e.message)
+    try:
+        preview = preview_plan(plan, root=root, force=force)
+    except Exception as e:
+        raise HTTPException(400, f"obsidian export preview failed: {type(e).__name__}: {e}")
+    return ExportPreviewOut(**preview.__dict__)
 
 
 def _normalise_extraction_payload(data: dict[str, Any] | None) -> dict[str, Any] | None:

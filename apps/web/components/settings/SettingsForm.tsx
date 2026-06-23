@@ -9,6 +9,7 @@ type Initial = {
   llm_model_strong: string;
   max_papers_per_landscape: number;
   obsidian_export_auto_push: boolean;
+  obsidian_auto_export: boolean;
   editable_fields: string[];
 };
 
@@ -34,6 +35,7 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
   const [strong, setStrong] = useState(initial.llm_model_strong);
   const [maxPapers, setMaxPapers] = useState(initial.max_papers_per_landscape);
   const [autoPush, setAutoPush] = useState(initial.obsidian_export_auto_push);
+  const [autoExport, setAutoExport] = useState(initial.obsidian_auto_export);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
@@ -47,6 +49,7 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
         llm_model_strong: strong,
         max_papers_per_landscape: Number(maxPapers),
         obsidian_export_auto_push: autoPush,
+        obsidian_auto_export: autoExport,
       });
       setMsg({ kind: "ok", text: "Saved — applies to new runs without a redeploy." });
     } catch (e: any) {
@@ -106,6 +109,15 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
       </div>
 
       <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, fontSize: 13 }}>
+        <input
+          type="checkbox"
+          checked={autoExport}
+          onChange={(e) => setAutoExport(e.target.checked)}
+        />
+        Auto-export to Obsidian when a landscape finishes
+      </label>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: 13 }}>
         <input
           type="checkbox"
           checked={autoPush}

@@ -402,6 +402,7 @@ async def _run(job_id: str) -> None:
 
         _set_stage(job_id, JobStage.DONE.value, 1.0, "Pipeline complete")
         _finalize(job_id, status=LandscapeStatus.READY.value)
+        _maybe_auto_export(job_id)
 
     except JobCancelled:
         _set_cancelled(job_id)
@@ -1294,6 +1295,31 @@ def _set_cancelled(job_id: str) -> None:
             landscape.status = LandscapeStatus.CANCELLED.value
             s.add(landscape)
     _publish(job_id, seq)
+
+
+def _maybe_auto_export(job_id: str) -> None:
+    """Opt-in Obsidian export on completion. Best-effort; never fails the job."""
+    try:
+        from app.services.export_service import auto_export_landscape
+
+        with session_scope() as s:
+            landscape_id = _landscape_id_of(s, job_id)
+        result = auto_export_landscape(landscape_id)
+        if result:
+            _append_event(
+                job_id,
+                JobStage.DONE.value,
+                f"Auto-exported {len(result.get('files') or [])} files to Obsidian",
+                1.0,
+                meta={
+                    "auto_export": True,
+                    "files": len(result.get("files") or []),
+                    "commit_sha": result.get("commit_sha"),
+                    "pushed": result.get("pushed"),
+                },
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _finalize(job_id: str, status: str) -> None:

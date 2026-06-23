@@ -380,6 +380,7 @@ class SettingsOut(BaseModel):
     embedding_dim: int
     obsidian_export_repo_path: str
     obsidian_export_auto_push: bool
+    obsidian_auto_export: bool
     max_papers_per_landscape: int
     has_openai_key: bool
     has_deepseek_key: bool
@@ -393,6 +394,7 @@ class SettingsPatch(BaseModel):
     llm_model_fast: Optional[str] = None
     llm_model_strong: Optional[str] = None
     obsidian_export_auto_push: Optional[bool] = None
+    obsidian_auto_export: Optional[bool] = None
     max_papers_per_landscape: Optional[int] = None
 
 

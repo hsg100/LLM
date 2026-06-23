@@ -12,6 +12,7 @@ type Settings = {
   embedding_dim: number;
   obsidian_export_repo_path: string;
   obsidian_export_auto_push: boolean;
+  obsidian_auto_export: boolean;
   max_papers_per_landscape: number;
   has_openai_key: boolean;
   has_deepseek_key: boolean;
@@ -99,6 +100,7 @@ export default async function SettingsPage() {
           llm_model_strong: s.llm_model_strong,
           max_papers_per_landscape: s.max_papers_per_landscape,
           obsidian_export_auto_push: s.obsidian_export_auto_push,
+          obsidian_auto_export: s.obsidian_auto_export,
           editable_fields: s.editable_fields ?? [],
         }}
       />
