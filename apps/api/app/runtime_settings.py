@@ -54,6 +54,7 @@ EDITABLE_FIELDS: dict[str, Callable[[Any], Any]] = {
     "llm_model_strong": _coerce_model,
     "max_papers_per_landscape": _coerce_max_papers,
     "obsidian_export_auto_push": _coerce_bool,
+    "obsidian_auto_export": _coerce_bool,
 }
 
 

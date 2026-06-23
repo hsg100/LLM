@@ -11,8 +11,14 @@ You are synthesising a research landscape for the topic: **{{topic}}**.
   extraction, or low grounding confidence as weaker evidence.
 - If evidence is weak, say so in content_quality/extraction_quality rather
   than making strong cross-paper claims.
-- Return ONLY a valid JSON object. No prose, no markdown fences.
-- Use the paper IDs exactly as given in the notes when referencing them.
+- Return ONLY a valid JSON object. No prose, no markdown fences, no trailing
+  commas. Do not truncate: if space is tight, return fewer clusters/edges rather
+  than a cut-off object.
+- Whenever you reference a paper — in `clusters.paper_ids`, `reading_path`,
+  `paper_rationales`, `must_read_paper_ids`, `skip_for_now`, or
+  `method_timeline` — you MUST echo the exact `paper_id` string from the notes.
+  Never substitute a title or an invented id. References that don't match a
+  given `paper_id` are discarded.
 
 ## Task
 Synthesise the landscape using the per-paper extractions. Group papers into

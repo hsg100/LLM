@@ -469,6 +469,9 @@ export default function PaperPage({ params }: { params: { id: string } }) {
           {Array.isArray(e.open_questions) && e.open_questions.length > 0 && (
             <ExtCardList label="OPEN QUESTIONS" color="var(--bad)" items={e.open_questions} bullet="?" concepts={concepts} landscapeId={landscapeId} />
           )}
+          {Array.isArray(e.source_grounding) && e.source_grounding.length > 0 && (
+            <GroundingCard items={e.source_grounding} />
+          )}
         </div>
       )}
 
@@ -930,6 +933,96 @@ function ExtCardList({
             </span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function groundingSource(g: any): string {
+  const parts: string[] = [];
+  if (g.section) parts.push(String(g.section));
+  if (g.page != null) parts.push(`page ${g.page}`);
+  if (g.chunk_ordinal != null) parts.push(`chunk ${g.chunk_ordinal}`);
+  else if (g.chunk_id) parts.push(`chunk ${g.chunk_id}`);
+  return parts.join(" · ") || "source unavailable";
+}
+
+function GroundingCard({ items }: { items: any[] }) {
+  return (
+    <div
+      style={{
+        gridColumn: "1 / -1",
+        border: "1px solid var(--bd)",
+        borderRadius: 14,
+        background: "var(--panel)",
+        padding: "18px 20px",
+        boxShadow: "var(--shadow)",
+      }}
+    >
+      <div
+        className="font-mono"
+        style={{ fontSize: 10, color: "var(--good)", letterSpacing: "0.1em", marginBottom: 4 }}
+      >
+        SOURCE GROUNDING
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--t4)", marginBottom: 13 }}>
+        Each claim is traced back to the parsed PDF — section, page, and chunk.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {items.map((g: any, i: number) => {
+          const conf = Math.round((g.confidence || 0) * 100);
+          return (
+            <div
+              key={i}
+              style={{
+                borderLeft: "2px solid var(--bd2)",
+                paddingLeft: 12,
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span
+                  className="font-mono"
+                  style={{
+                    fontSize: 10,
+                    padding: "2px 7px",
+                    borderRadius: 5,
+                    background: "var(--raised)",
+                    border: "1px solid var(--bd)",
+                    color: "var(--t2)",
+                  }}
+                >
+                  {String(g.field || "").replace(/_/g, " ")}
+                </span>
+                <span className="font-mono" style={{ fontSize: 11, color: "var(--t3)" }}>
+                  {groundingSource(g)}
+                </span>
+                {g.confidence != null && (
+                  <span
+                    className="font-mono"
+                    style={{ fontSize: 10.5, color: confidenceColor(g.confidence || 0) }}
+                  >
+                    {conf}%
+                  </span>
+                )}
+              </div>
+              {g.quote && (
+                <div
+                  style={{
+                    fontSize: 12.5,
+                    lineHeight: 1.5,
+                    color: "var(--t2)",
+                    fontStyle: "italic",
+                  }}
+                >
+                  “{g.quote}”
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

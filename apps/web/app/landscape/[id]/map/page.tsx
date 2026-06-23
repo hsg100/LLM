@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { apiGet, Landscape, LandscapePaper } from "../../../../lib/api";
+import { apiGet, getLandscapeGraph, Landscape, LandscapePaper, PaperGraph } from "../../../../lib/api";
 import {
   CATEGORY_META,
   Category,
   clusterColor,
   hexAlpha,
 } from "../../../../lib/clusters";
+import RelationshipGraph from "../../../../components/graph/RelationshipGraph";
 
 type ClusterGroup = {
   id: string;
@@ -23,6 +24,15 @@ export default function MapPage({ params }: { params: { id: string } }) {
   const [papers, setPapers] = useState<LandscapePaper[]>([]);
   const [synthesis, setSynthesis] = useState<any>({});
   const [err, setErr] = useState<string | null>(null);
+  const [mode, setMode] = useState<"clusters" | "relationships">("clusters");
+  const [graph, setGraph] = useState<PaperGraph | null>(null);
+
+  useEffect(() => {
+    if (mode !== "relationships" || graph) return;
+    getLandscapeGraph(params.id)
+      .then(setGraph)
+      .catch((e: any) => setErr(e.message || "Failed to load relationship graph"));
+  }, [mode, graph, params.id]);
 
   useEffect(() => {
     setErr(null);
@@ -95,19 +105,34 @@ export default function MapPage({ params }: { params: { id: string } }) {
             Clusters are ranked by average relevance. Open any paper to inspect the grounded notes.
           </p>
         </div>
-        <div
-          className="font-mono"
-          style={{
-            display: "flex",
-            gap: 14,
-            fontSize: 11,
-            color: "var(--t3)",
-            flexWrap: "wrap",
-          }}
-        >
-          <span>{groups.length} clusters</span>
-          <span>{papers.length} papers</span>
-          <span>{topPapers.length} highlighted</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end" }}>
+          <div style={{ display: "flex", gap: 4, border: "1px solid var(--bd)", borderRadius: 9, padding: 3, background: "var(--panel)" }}>
+            {(["clusters", "relationships"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                style={{
+                  all: "unset",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  padding: "6px 12px",
+                  borderRadius: 7,
+                  color: mode === m ? "#fff" : "var(--t3)",
+                  background: mode === m ? "var(--accent)" : "transparent",
+                }}
+              >
+                {m === "clusters" ? "Clusters" : "Relationships"}
+              </button>
+            ))}
+          </div>
+          <div
+            className="font-mono"
+            style={{ display: "flex", gap: 14, fontSize: 11, color: "var(--t3)", flexWrap: "wrap" }}
+          >
+            <span>{groups.length} clusters</span>
+            <span>{papers.length} papers</span>
+            <span>{graph ? `${graph.edges.length} edges` : `${topPapers.length} highlighted`}</span>
+          </div>
         </div>
       </div>
 
@@ -127,7 +152,13 @@ export default function MapPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      {groups.length === 0 ? (
+      {mode === "relationships" ? (
+        !graph ? (
+          <div style={{ color: "var(--t3)", fontSize: 13, padding: "20px 0" }}>Loading graph…</div>
+        ) : (
+          <RelationshipGraph nodes={graph.nodes} edges={graph.edges} landscapeId={params.id} />
+        )
+      ) : groups.length === 0 ? (
         <div
           style={{
             border: "1px dashed var(--bd)",

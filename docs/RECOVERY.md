@@ -467,6 +467,53 @@ field-structure nodes), Relationships (§3.7), Landscape UI (§3.12), Export
 
 **Decisions needed.** Acceptable degraded UX when synthesis LLM fails — show
 skeleton labelled as such, or block the landscape as "incomplete"?
+*(Resolved — decision #9: labelled skeleton.)*
+
+**Status: reliability + quality hardening implemented & verified
+(Sprint 5 follow-on).** The single biggest defect — `synthesise()` wrapping the
+whole call in `try/except Exception: return skeleton`, which silently collapsed
+*every* failure (parse error, one bad nested item, timeout, HTTP 400,
+validation) to the deterministic skeleton with no diagnostics — is gone.
+What changed:
+
+- **Structured outcome + telemetry.** `synthesise_with_meta()` (new entry point;
+  `synthesise()` kept as a thin wrapper) returns a `SynthesisResult` carrying a
+  named `cause` (`real` / `no_papers` / `stub` / `json_parse` / `validation` /
+  `timeout` / `http_400` / `http_error` / `empty_fields` / `error`) and a
+  `degraded` flag. The worker now emits a `synthesising` job event naming the
+  exact cause when it degrades, persists `synthesis.synthesis_quality`, and sets
+  `content_quality="degraded"` honestly (the FE banner already labels it as an
+  "auto-generated outline" per decision #9).
+- **Partial-field salvage.** `_validate_with_salvage` validates each nested item
+  (clusters / reading_path / paper_rationales / field-structure nodes & edges)
+  **item-by-item**, so one malformed cluster or out-of-range node no longer sinks
+  the entire synthesis — the good content survives and the run still counts as
+  `real`.
+- **JSON robustness.** `_try_parse_json` (llm.py) now strips trailing commas and
+  salvages truncated objects (max_tokens cut-offs) by closing open
+  brackets/strings, on top of the existing fence/prose handling.
+- **Token budget / compact retry.** `build_papers_json(..., compact=True)` trims
+  the bundle (cap count, drop bulky list fields); on an HTTP 400 the synthesis
+  call retries with the compact bundle, mirroring extraction.py.
+- **`field_structure_generated` is now honest:** True only when ≥1 LLM node
+  survives validation; the deterministic fallback is never mislabelled as
+  LLM-authored.
+- **Identity seam (§4.2) made observable.** The synthesis prompt hard-demands
+  exact `paper_id` echoes; `_persist_synthesis` counts how references resolve
+  (`id_hit` / `title_fallback` / `unmatched`), logs fallbacks, and folds the
+  counts into `synthesis.synthesis_quality.identity_resolution`. Title matching
+  remains a last resort only.
+
+Tests: `tests/test_synthesis_reliability.py` covers each failure mode
+(parse/truncation, one-bad-item salvage, timeout, validation, empty, HTTP 400
+compact retry, non-400 error, stub gating, compact-bundle sizing,
+field-structure-generated honesty) plus a DB-backed identity-resolution test.
+Verified: ruff clean, 109 tests pass (DB-backed on pgvector PG16), Alembic
+`upgrade head` + autogenerate drift-clean (no model changes), `next build` green.
+**Deferred (unchanged):** decomposing the one-giant-prompt into a multi-pass
+design (current single prompt + salvage is reliable enough); citation-edge
+seeding for the DAG; a dedicated field-structure UI (graph viz lands in Sprint 7
+scope).
 
 ---
 
@@ -922,6 +969,30 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 ### Sprint 5 — Grounding depth & extraction correctness *(closes §3.4, §3.5)*
 
 > **Goal:** Trustworthy, page-level source grounding.
+>
+> **Status: implemented & verified.** PDF parsing is now **page-aware**: the
+> parser renders pages individually (`page_chunks=True`), assembles one markdown
+> document while recording a per-page char-span map (`ParsedPdf.page_spans`), and
+> emits `ParsedSection`s carrying `page_start/page_end` + the content's absolute
+> `doc_offset`. The worker's `_replace_sections_and_chunks` maps each derived
+> chunk's char-range back through the page map to a 1-based PDF page, so
+> `page_start/page_end` are populated on both `paper_sections` and `chunks`
+> (previously always `None`). The existing grounding chain already threads
+> `chunk.page_start` → extraction context → `validate_grounding` → the export
+> renderer; with real pages flowing it now cites "section · page N · chunk N".
+> Added a **Source grounding** card to the paper-detail UI showing field →
+> section · page · chunk + quote + confidence. The extraction-refresh predicate
+> (`_extraction_needs_refresh`) was rewritten with explicit, tested cases and now
+> takes `provider_is_real`: degraded extractions are invalidated (re-extracted)
+> when a real LLM is configured but kept under the dev stub (no pointless churn);
+> low-signal healthy extractions also refresh only under a real provider.
+> Chunking was already consolidated on the worker's range-aware
+> `_chunk_text_with_ranges` in Sprint 0 (verified — the parser no longer chunks).
+> 74 tests pass (incl. a DB-backed chunk→page persistence test); ruff clean;
+> migrations drift-clean (page columns already existed — no migration needed);
+> `next build` green.
+> **Deferred (unchanged from plan):** figure/table extraction (§3.4) remains a
+> later enhancement.
 
 - **Page-aware PDF parsing** → populate `page_start/page_end` on sections/chunks;
   thread pages through grounding → paper UI → export.
@@ -935,6 +1006,25 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 ### Sprint 6 — Active recall & review loop *(closes §3.9, mobile parts of §3.12)*
 
 > **Goal:** The differentiator — prove understanding, not just consume.
+>
+> **Status: implemented & verified.** The review loop is real now. A pure-Python
+> **FSRS-4.5 scheduler** (`app/services/fsrs.py`, no new deps) models per-item
+> stability/difficulty and grades reviews on the 4-point Again/Hard/Good/Easy
+> scale; `POST /landscapes/{id}/review` records a `ReviewAttempt` *and* advances a
+> new per-item `ReviewState` (migration 0005; `review_attempts.user_id` added).
+> `GET …/review/queue` returns a daily queue (overdue first, then unseen) and
+> `GET …/review/weak-areas` aggregates accuracy per concept (lowest first).
+> Question types are richer: the quiz fallback + prompt now emit
+> **explain-before-reveal** flashcards (`kind=explain`) and **paper-comparison**
+> MCQs/`compare` cards. A responsive **/landscape/[id]/review** screen drives
+> flashcards (reveal → self-grade) and MCQs (pick → grade from correctness),
+> posts each review, and has a weak-areas tab; the landscape page links to it.
+> 83 tests pass (7 FSRS property tests + 1 generator test + a DB-backed
+> review-service test; plus an HTTP TestClient smoke); ruff clean; migrations
+> drift-clean; `next build` green.
+> **Deferred / later:** parameter optimisation/tuning of the FSRS weights from a
+> user's own history (defaults shipped); cloze generation; review history on the
+> Obsidian export.
 
 - **`POST review`** → record `ReviewAttempt`; basic scheduler → **FSRS**;
   **review-queue** + **weak-area** endpoints.
@@ -946,6 +1036,31 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 ### Sprint 7 — Annotation, export UX & frontend polish *(closes §3.8, §3.10, rest of §3.12)*
 
 > **Goal:** Coherence and finish across the loop.
+>
+> **Status: implemented & verified.** **Annotation** is now single-source
+> (decision #7): `POST /landscapes/{id}/annotate` serves segments from the
+> canonical `annotate_text`; the client (`lib/annotation.ts`) batches all
+> requests in a microtask into one round-trip and caches per (landscape, text),
+> and `ConceptText` consumes server segments — the duplicated TS `annotate()`
+> algorithm is deleted, so there's nothing left to drift. A golden-fixture parity
+> test pins the segmentation (code/headings protected, generic terms skipped,
+> lossless round-trip) plus a DB-backed endpoint test. **Export UX:** a shared
+> `export_service` builds the plan + writes/records in one place (route preview,
+> route export, and the worker all use it — the route's duplicated builder is
+> gone); one-click init was already covered (`write_plan` inits a non-git repo)
+> and the export page already shows prominent preview diffs + commit; added
+> **opt-in auto-export-on-complete** (`obsidian_auto_export` runtime setting →
+> worker exports on a successful finish, best-effort, with a settings toggle).
+> **Graph viz:** a dependency-free interactive SVG **RelationshipGraph**
+> (force layout, draggable nodes, zoom/pan, edge hover with type + rationale,
+> click-through) on a new Clusters/Relationships toggle on the map page,
+> consuming the Sprint-4 `/graph` edges. 88 backend tests pass; ruff clean;
+> migrations drift-clean; `next build` green.
+> **Deferred (honest):** full decomposition of the remaining giant pages
+> (landscape ~1014 / paper ~988 / jobs ~738) into hooks+components — one
+> substantial component (RelationshipGraph) was extracted and the map page
+> branched, but the big pages are otherwise unchanged; a concept-map graph view
+> (the relationship graph shipped) and richer graph styling are later polish.
 
 - **Server-rendered concept annotation** + parity test; client consumes the
   segment contract.

@@ -85,7 +85,7 @@ def ingest_uploaded_pdf(s: Session, landscape_id: str, filename: str, data: byte
         if not paper.abstract and parsed.markdown:
             paper.abstract = parsed.markdown.strip()[:1500]
             s.add(paper)
-        _replace_sections_and_chunks(s, paper.id, parsed.sections)
+        _replace_sections_and_chunks(s, paper.id, parsed)
 
     link = s.exec(
         select(LandscapePaper).where(

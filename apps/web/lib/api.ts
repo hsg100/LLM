@@ -143,6 +143,7 @@ export type SettingsPatch = {
   llm_model_strong?: string;
   max_papers_per_landscape?: number;
   obsidian_export_auto_push?: boolean;
+  obsidian_auto_export?: boolean;
 };
 
 export async function updateSettings(patch: SettingsPatch): Promise<any> {
@@ -223,6 +224,63 @@ export type Flashcard = {
   kind: string;
 };
 
+// ---- Active recall: review loop (FSRS) ----
+export type ReviewRating = 1 | 2 | 3 | 4; // Again / Hard / Good / Easy
+
+export type ReviewQueueItem = {
+  item_kind: "quiz" | "flashcard";
+  item_id: string;
+  due: string | null;
+  state: string;
+  reps: number;
+  lapses: number;
+  quiz: Quiz | null;
+  flashcard: Flashcard | null;
+};
+
+export type ReviewQueue = {
+  now: string;
+  due_count: number;
+  new_count: number;
+  items: ReviewQueueItem[];
+};
+
+export type ReviewResult = {
+  item_kind: string;
+  item_id: string;
+  rating: number;
+  correct: boolean | null;
+  interval_days: number;
+  due: string | null;
+  state: string;
+  reps: number;
+  lapses: number;
+  stability: number | null;
+  difficulty: number | null;
+};
+
+export type WeakArea = {
+  concept: string;
+  attempts: number;
+  correct: number;
+  accuracy: number;
+};
+
+export async function getReviewQueue(landscapeId: string, limit = 40): Promise<ReviewQueue> {
+  return apiGet<ReviewQueue>(`/api/landscapes/${landscapeId}/review/queue?limit=${limit}`);
+}
+
+export async function getWeakAreas(landscapeId: string): Promise<WeakArea[]> {
+  return apiGet<WeakArea[]>(`/api/landscapes/${landscapeId}/review/weak-areas`);
+}
+
+export async function submitReview(
+  landscapeId: string,
+  body: { item_kind: "quiz" | "flashcard"; item_id: string; rating: ReviewRating; correct?: boolean }
+): Promise<ReviewResult> {
+  return apiPost<ReviewResult>(`/api/landscapes/${landscapeId}/review`, body);
+}
+
 export type PaperDetail = {
   paper: Paper;
   extraction: Record<string, any> | null;
@@ -270,3 +328,23 @@ export type ConceptMap = {
   nodes: { id: string; label: string; type: string }[];
   edges: { source: string; target: string; type: string }[];
 };
+
+export type GraphNode = {
+  paper: Paper;
+  score: number;
+  category: string;
+  cluster_id: string | null;
+};
+
+export type GraphEdge = {
+  source_paper_id: string;
+  target_paper_id: string;
+  type: string;
+  rationale: string | null;
+};
+
+export type PaperGraph = { nodes: GraphNode[]; edges: GraphEdge[] };
+
+export async function getLandscapeGraph(landscapeId: string): Promise<PaperGraph> {
+  return apiGet<PaperGraph>(`/api/landscapes/${landscapeId}/graph`);
+}

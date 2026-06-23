@@ -1,0 +1,60 @@
+{
+  "text": "RAG evaluation measures faithfulness of answers.\n\nA second paragraph mentions faithfulness again and `RAG` in code.\n\n# Heading mentions RAG too\n\nPlain model word should stay plain.",
+  "concepts": [
+    {
+      "slug": "retrieval-augmented-generation",
+      "term": "retrieval-augmented generation",
+      "aliases": [
+        "RAG"
+      ],
+      "short_definition": "Combining retrieval with generation.",
+      "confidence": 0.9
+    },
+    {
+      "slug": "faithfulness",
+      "term": "faithfulness",
+      "aliases": [],
+      "short_definition": "Whether an answer is supported by sources.",
+      "confidence": 0.8
+    },
+    {
+      "slug": "model",
+      "term": "model",
+      "aliases": [],
+      "short_definition": "generic",
+      "confidence": 0.9
+    }
+  ],
+  "segments": [
+    {
+      "type": "concept",
+      "text": "RAG",
+      "concept_slug": "retrieval-augmented-generation",
+      "definition": "Combining retrieval with generation."
+    },
+    {
+      "type": "text",
+      "text": " evaluation measures "
+    },
+    {
+      "type": "concept",
+      "text": "faithfulness",
+      "concept_slug": "faithfulness",
+      "definition": "Whether an answer is supported by sources."
+    },
+    {
+      "type": "text",
+      "text": " of answers.\n\nA second paragraph mentions "
+    },
+    {
+      "type": "concept",
+      "text": "faithfulness",
+      "concept_slug": "faithfulness",
+      "definition": "Whether an answer is supported by sources."
+    },
+    {
+      "type": "text",
+      "text": " again and `RAG` in code.\n\n# Heading mentions RAG too\n\nPlain model word should stay plain."
+    }
+  ]
+}

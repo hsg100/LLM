@@ -18,6 +18,7 @@ Per-paper LLM calls are isolated so one failure can't kill the job.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any, Optional
 
@@ -43,7 +44,7 @@ from app.models import (
     Quiz,
     SearchJob,
 )
-from app.parsers.pdf_parser import download_pdf, parse_pdf_bytes
+from app.parsers.pdf_parser import ParsedPdf, download_pdf, page_for_offset, parse_pdf_bytes
 from app.services.embeddings import (
     embedding_fallback_allowed,
     embedding_metadata,
@@ -65,9 +66,11 @@ from app.services.pdf_storage import deterministic_pdf_filename, resolve_pdf_sto
 from app.services.quiz_generation import generate_quizzes_and_flashcards
 from app.services.ranking import rank_papers
 from app.services.relationships import generate_relationships
-from app.services.synthesis import synthesise
+from app.services.synthesis import synthesise_with_meta
 from app.services.vectors import has_embedding, to_list
 
+
+logger = logging.getLogger("fieldmap.worker")
 
 # Canonical ordered stages live in app.pipeline (shared with the API + frontend).
 STAGES = PIPELINE_STAGES
@@ -294,7 +297,9 @@ async def _run(job_id: str) -> None:
         _raise_if_cancelled(job_id)
         _set_stage(job_id, "extracting", 0.5, "Extracting structured notes")
         llm_fast = get_llm(strong=False)
-        extraction_quality = await _extract_all(job_id, ranked, paper_ids, llm_fast)
+        extraction_quality = await _extract_all(
+            job_id, ranked, paper_ids, llm_fast, provider_is_real=_provider_is_real(llm_fast)
+        )
         if extraction_quality.get("content_quality") == "degraded":
             _append_event(
                 job_id,
@@ -309,30 +314,46 @@ async def _run(job_id: str) -> None:
         _set_stage(job_id, "synthesising", 0.78, "Synthesising landscape")
         bundle = _load_landscape_bundle(job_id, paper_ids)
         llm_strong = get_llm(strong=True)
-        synthesis = await synthesise(
+        synthesis_result = await synthesise_with_meta(
             llm_strong,
             topic=topic,
             landscape_papers=bundle,
             timeout_seconds=settings.synthesis_timeout_seconds,
         )
+        synthesis = synthesis_result.synthesis
+        synthesis_meta = synthesis_result.meta()
         synthesis_dict = synthesis.model_dump()
-        synthesis_dict["content_quality"] = (
-            "degraded"
-            if extraction_quality.get("content_quality") == "degraded"
-            else synthesis_dict.get("content_quality") or extraction_quality.get("content_quality", "ok")
-        )
+        # content_quality is honest: degraded if extraction was weak OR the
+        # synthesis itself degraded (named cause in synthesis_meta).
+        if extraction_quality.get("content_quality") == "degraded" or synthesis_result.degraded:
+            synthesis_dict["content_quality"] = "degraded"
+        else:
+            synthesis_dict["content_quality"] = (
+                synthesis_dict.get("content_quality") or extraction_quality.get("content_quality", "ok")
+            )
         synthesis_dict["extraction_quality"] = extraction_quality
+        synthesis_dict["synthesis_quality"] = synthesis_meta
         refreshed_bundle = _persist_synthesis(job_id, synthesis_dict, bundle)
+        if synthesis_result.degraded and synthesis_result.cause not in {"no_papers", "stub"}:
+            _append_event(
+                job_id,
+                "synthesising",
+                f"Synthesis degraded ({synthesis_result.cause})"
+                + (f": {synthesis_result.detail}" if synthesis_result.detail else ""),
+                0.83,
+                meta=synthesis_meta,
+            )
         _append_event(
             job_id,
             "synthesising",
-            "Synthesis ready",
+            "Synthesis ready" if not synthesis_result.degraded else "Synthesis ready (auto-generated outline)",
             0.84,
             meta={
                 "content_quality": synthesis_dict.get("content_quality"),
                 "clusters": len(synthesis_dict.get("clusters") or []),
                 "reading_path_items": len(synthesis_dict.get("reading_path") or []),
                 "field_structure_generated": synthesis_dict.get("field_structure_generated", False),
+                **synthesis_meta,
             },
         )
 
@@ -400,6 +421,7 @@ async def _run(job_id: str) -> None:
 
         _set_stage(job_id, JobStage.DONE.value, 1.0, "Pipeline complete")
         _finalize(job_id, status=LandscapeStatus.READY.value)
+        _maybe_auto_export(job_id)
 
     except JobCancelled:
         _set_cancelled(job_id)
@@ -658,7 +680,7 @@ async def _download_and_parse(job_id: str, ranked, paper_ids: dict[str, str]) ->
                     pdf_row.error = parsed.error
                 s.add(pdf_row)
                 if parsed.ok:
-                    _replace_sections_and_chunks(s, paper_id, parsed.sections)
+                    _replace_sections_and_chunks(s, paper_id, parsed)
             await mark_parse(
                 cand,
                 paper_id,
@@ -687,33 +709,42 @@ async def _download_and_parse(job_id: str, ranked, paper_ids: dict[str, str]) ->
     _set_stage(job_id, "parsing_pdfs", 0.48, "PDF parsing complete")
 
 
-def _replace_sections_and_chunks(s, paper_id: str, sections: list[tuple[str, str]]) -> None:  # type: ignore[no-untyped-def]
+def _replace_sections_and_chunks(s, paper_id: str, parsed: ParsedPdf) -> None:  # type: ignore[no-untyped-def]
     s.exec(delete(Chunk).where(Chunk.paper_id == paper_id))
     s.exec(delete(PaperSection).where(PaperSection.paper_id == paper_id))
+    page_spans = parsed.page_spans
     chunk_ordinal = 0
-    for section_ordinal, (heading, content) in enumerate(sections):
+    for section_ordinal, sec in enumerate(parsed.sections):
         section = PaperSection(
             paper_id=paper_id,
             ordinal=section_ordinal,
-            heading=heading,
-            page_start=None,
-            page_end=None,
-            content=content,
+            heading=sec.heading,
+            page_start=sec.page_start,
+            page_end=sec.page_end,
+            content=sec.content,
         )
         s.add(section)
         s.flush()
-        char_start = 0
-        for chunk_text, start, end in _chunk_text_with_ranges(content, target_chars=1200, overlap=120):
+        for chunk_text, start, end in _chunk_text_with_ranges(sec.content, target_chars=1200, overlap=120):
+            # Map the chunk's char range (relative to the section content) back
+            # to a document offset, then to a 1-based PDF page. Falls back to the
+            # section's page range when no page map is available.
+            page_start = page_for_offset(page_spans, sec.doc_offset + start) if page_spans else sec.page_start
+            page_end = (
+                page_for_offset(page_spans, sec.doc_offset + max(start, end - 1))
+                if page_spans
+                else sec.page_end
+            )
             s.add(
                 Chunk(
                     paper_id=paper_id,
                     section_id=section.id,
                     ordinal=chunk_ordinal,
-                    section_heading=heading,
-                    page_start=None,
-                    page_end=None,
-                    char_start=char_start + start,
-                    char_end=char_start + end,
+                    section_heading=sec.heading,
+                    page_start=page_start,
+                    page_end=page_end,
+                    char_start=start,
+                    char_end=end,
                     content=chunk_text,
                 )
             )
@@ -746,6 +777,8 @@ async def _extract_all(
     ranked,  # type: ignore[no-untyped-def]
     paper_ids: dict[str, str],
     llm,  # type: ignore[no-untyped-def]
+    *,
+    provider_is_real: bool = True,
 ) -> dict[str, Any]:
     total = len(ranked)
     sem = asyncio.Semaphore(3)
@@ -768,7 +801,7 @@ async def _extract_all(
             # Cached?
             with session_scope() as s:
                 row = s.exec(select(Extraction).where(Extraction.paper_id == paper_id)).first()
-                if row is not None and not _extraction_needs_refresh(row.data):
+                if row is not None and not _extraction_needs_refresh(row.data, provider_is_real=provider_is_real):
                     async with stats_lock:
                         stats["total"] += 1
                         grounding = ((row.data or {}).get("_fieldmap") or {}).get("grounding") or {}
@@ -877,6 +910,15 @@ async def _extract_all(
     }
 
 
+def _provider_is_real(llm) -> bool:  # type: ignore[no-untyped-def]
+    """True when a real (non-stub) LLM is configured.
+
+    A real provider means previously-degraded/stub extractions are worth
+    re-running; the deterministic dev StubLLM is not.
+    """
+    return getattr(llm, "name", "") != "stub"
+
+
 def _extraction_is_degraded(data: dict[str, Any]) -> bool:
     meta = (data or {}).get("_fieldmap") or {}
     if meta:
@@ -884,13 +926,36 @@ def _extraction_is_degraded(data: dict[str, Any]) -> bool:
     return _is_low_signal_extraction(data)
 
 
-def _extraction_needs_refresh(data: dict[str, Any]) -> bool:
-    meta = (data or {}).get("_fieldmap") or {}
-    if meta.get("degraded"):
+def _extraction_needs_refresh(data: dict[str, Any], *, provider_is_real: bool = True) -> bool:
+    """Decide whether a cached extraction should be re-run.
+
+    Explicit cases, first match wins:
+
+    1. No data at all                                  → refresh (nothing cached).
+    2. No ``_fieldmap`` meta (legacy / pre-grounding)  → refresh (re-extract under
+       the current grounding-aware pipeline).
+    3. Grounding diagnostics missing from meta         → refresh (incomplete run).
+    4. Degraded extraction:
+         - a real provider is now configured           → refresh — this is the
+           stub→real (or transient-failure→real) invalidation the spec requires.
+         - still on the stub / no real provider         → keep — re-running can't
+           improve it and would churn every landscape run.
+    5. Healthy but low-signal extraction + real provider → refresh (squeeze more
+       out of the paper now that a capable model is available).
+    6. Otherwise                                        → keep the cached result.
+    """
+    if not data:
+        return True
+    meta = data.get("_fieldmap") or {}
+    if not meta:
         return True
     if "grounding" not in meta:
         return True
-    return not meta and _is_low_signal_extraction(data)
+    if meta.get("degraded"):
+        return provider_is_real
+    if provider_is_real and _is_low_signal_extraction(data):
+        return True
+    return False
 
 
 def _is_low_signal_extraction(data: dict[str, Any]) -> bool:
@@ -968,8 +1033,9 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
         landscape = s.get(Landscape, landscape_id)
         if landscape is None:
             return []
-        landscape.synthesis = synthesis_dict
-        s.add(landscape)
+        # ``landscape.synthesis`` is assigned once, at the end of this function,
+        # after identity-resolution telemetry has been folded in (JSONB columns
+        # don't track in-place mutation, so we set the final object once).
 
         # Replace prior clusters (and their cluster_paper links).
         prior_clusters = s.exec(select(Cluster).where(Cluster.landscape_id == landscape_id)).all()
@@ -993,15 +1059,29 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
             ).all()
         }
 
+        # Track how synthesis paper references resolve so the paper-identity
+        # seam (RECOVERY §4.2) is observable: id_hit (clean), title_fallback
+        # (brittle, the prompt asks for ids), unmatched (dropped reference).
+        ident = {"id_hit": 0, "title_fallback": 0, "unmatched": 0}
+
+        def _resolve_ref(ref: Any, *, title: Any = None) -> Optional[str]:
+            if ref in bundle_pids:
+                ident["id_hit"] += 1
+                return ref  # type: ignore[return-value]
+            pid = title_to_pid.get(ref) or (title_to_pid.get(title) if title else None)
+            if pid:
+                ident["title_fallback"] += 1
+                return pid
+            ident["unmatched"] += 1
+            return None
+
         # Synthesis owns the user-facing rationale ("why read / why skip"),
         # replacing ranking's metric string. Resolve by paper_id (id-first).
         for item in synthesis_dict.get("paper_rationales") or []:
             if not isinstance(item, dict):
                 continue
-            pid = item.get("paper_id")
             text = str(item.get("rationale") or "").strip()
-            if pid not in bundle_pids:
-                pid = title_to_pid.get(item.get("paper_id"))
+            pid = _resolve_ref(item.get("paper_id"))
             link = links_by_pid.get(pid) if pid else None
             if link is not None and text:
                 link.rationale = text[:500]
@@ -1017,7 +1097,7 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
             s.add(row)
             s.flush()
             for pid_or_title in c.get("paper_ids") or []:
-                paper_id = pid_or_title if pid_or_title in bundle_pids else title_to_pid.get(pid_or_title)
+                paper_id = _resolve_ref(pid_or_title)
                 if paper_id:
                     s.add(ClusterPaper(cluster_id=row.id, paper_id=paper_id))
                     # Set landscape_paper cluster + reading order
@@ -1027,15 +1107,29 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
                         s.add(link)
 
         for step_idx, step in enumerate(synthesis_dict.get("reading_path") or []):
-            pid = step.get("paper_id")
-            if pid not in bundle_pids:
-                pid = title_to_pid.get(step.get("title"))
+            pid = _resolve_ref(step.get("paper_id"), title=step.get("title"))
             if not pid:
                 continue
             link = links_by_pid.get(pid)
             if link is not None:
                 link.reading_order = step_idx + 1
                 s.add(link)
+
+        if ident["title_fallback"] or ident["unmatched"]:
+            logger.warning(
+                "synthesis_identity_resolution landscape=%s id_hit=%d title_fallback=%d unmatched=%d",
+                landscape_id,
+                ident["id_hit"],
+                ident["title_fallback"],
+                ident["unmatched"],
+            )
+        # Surface identity resolution into the persisted synthesis telemetry.
+        sq = synthesis_dict.get("synthesis_quality")
+        if isinstance(sq, dict):
+            sq["identity_resolution"] = ident
+        # Assign a fresh dict so SQLAlchemy reliably detects the JSONB change.
+        landscape.synthesis = dict(synthesis_dict)
+        s.add(landscape)
 
         refreshed_bundle: list[dict[str, Any]] = []
         for b in bundle:
@@ -1249,6 +1343,31 @@ def _set_cancelled(job_id: str) -> None:
             landscape.status = LandscapeStatus.CANCELLED.value
             s.add(landscape)
     _publish(job_id, seq)
+
+
+def _maybe_auto_export(job_id: str) -> None:
+    """Opt-in Obsidian export on completion. Best-effort; never fails the job."""
+    try:
+        from app.services.export_service import auto_export_landscape
+
+        with session_scope() as s:
+            landscape_id = _landscape_id_of(s, job_id)
+        result = auto_export_landscape(landscape_id)
+        if result:
+            _append_event(
+                job_id,
+                JobStage.DONE.value,
+                f"Auto-exported {len(result.get('files') or [])} files to Obsidian",
+                1.0,
+                meta={
+                    "auto_export": True,
+                    "files": len(result.get("files") or []),
+                    "commit_sha": result.get("commit_sha"),
+                    "pushed": result.get("pushed"),
+                },
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _finalize(job_id: str, status: str) -> None:

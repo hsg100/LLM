@@ -288,6 +288,14 @@ class AnnotatedTextSegment(BaseModel):
     definition: Optional[str] = None
 
 
+class AnnotateRequest(BaseModel):
+    texts: list[str] = Field(default_factory=list, max_length=64)
+
+
+class AnnotateResponse(BaseModel):
+    results: list[list[AnnotatedTextSegment]]
+
+
 # ---------------------------------------------------------------------------
 # Quiz + flashcards
 # ---------------------------------------------------------------------------
@@ -312,6 +320,55 @@ class FlashcardOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Active recall: review loop (FSRS)
+# ---------------------------------------------------------------------------
+class ReviewSubmitIn(BaseModel):
+    item_kind: Literal["quiz", "flashcard"]
+    item_id: str
+    rating: int = Field(ge=1, le=4, description="FSRS grade: 1 Again, 2 Hard, 3 Good, 4 Easy")
+    correct: Optional[bool] = None
+
+
+class ReviewResultOut(BaseModel):
+    item_kind: str
+    item_id: str
+    rating: int
+    correct: Optional[bool]
+    interval_days: int
+    due: Optional[datetime]
+    state: str
+    reps: int
+    lapses: int
+    stability: Optional[float]
+    difficulty: Optional[float]
+
+
+class ReviewQueueItemOut(BaseModel):
+    item_kind: str
+    item_id: str
+    due: Optional[datetime]
+    state: str
+    reps: int
+    lapses: int
+    quiz: Optional[QuizOut] = None
+    flashcard: Optional[FlashcardOut] = None
+
+
+class ReviewQueueOut(BaseModel):
+    now: datetime
+    due_count: int
+    new_count: int
+    items: list[ReviewQueueItemOut]
+
+
+class WeakAreaOut(BaseModel):
+    concept: str
+    attempts: int
+    correct: int
+    accuracy: float
+
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 class SettingsOut(BaseModel):
@@ -323,6 +380,7 @@ class SettingsOut(BaseModel):
     embedding_dim: int
     obsidian_export_repo_path: str
     obsidian_export_auto_push: bool
+    obsidian_auto_export: bool
     max_papers_per_landscape: int
     has_openai_key: bool
     has_deepseek_key: bool
@@ -336,6 +394,7 @@ class SettingsPatch(BaseModel):
     llm_model_fast: Optional[str] = None
     llm_model_strong: Optional[str] = None
     obsidian_export_auto_push: Optional[bool] = None
+    obsidian_auto_export: Optional[bool] = None
     max_papers_per_landscape: Optional[int] = None
 
 
