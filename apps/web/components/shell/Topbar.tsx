@@ -291,8 +291,13 @@ function StatusPill({ status }: { status: string }) {
 
 function FakeSearch(): ReactNode {
   return (
-    <div
+    <button
+      type="button"
+      onClick={() => window.dispatchEvent(new Event("fm:open-cmdk"))}
+      aria-label="Open command palette"
       style={{
+        all: "unset",
+        cursor: "pointer",
         display: "flex",
         alignItems: "center",
         gap: 7,
@@ -303,6 +308,7 @@ function FakeSearch(): ReactNode {
         color: "var(--t3)",
         fontSize: 12.5,
         width: 230,
+        boxSizing: "border-box",
       }}
     >
       <svg width="13" height="13" viewBox="0 0 15 15" fill="none">
@@ -323,6 +329,6 @@ function FakeSearch(): ReactNode {
       >
         ⌘K
       </span>
-    </div>
+    </button>
   );
 }

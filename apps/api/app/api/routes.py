@@ -55,6 +55,7 @@ from app.schemas import (
     ExportResult,
     FlashcardOut,
     JobOut,
+    JobSummary,
     PaperGraphNode,
     PaperGraphOut,
     PaperRelationshipOut,
@@ -444,6 +445,47 @@ def _job_out(s: Session, job: SearchJob) -> JobOut:
         started_at=job.started_at,
         finished_at=job.finished_at,
     )
+
+
+@router.get("/jobs", response_model=list[JobSummary])
+def list_jobs(
+    landscape_id: str | None = None,
+    limit: int = 50,
+    s: Session = Depends(get_session),
+) -> list[JobSummary]:
+    """Global job index (newest first), optionally scoped to one landscape.
+
+    Closes the gap where a running landscape's job was only reachable from the
+    create flow — the sidebar Job monitor and landscape Overview link here.
+    """
+    q = select(SearchJob).order_by(SearchJob.created_at.desc()).limit(max(1, min(limit, 200)))
+    if landscape_id:
+        q = select(SearchJob).where(SearchJob.landscape_id == landscape_id).order_by(
+            SearchJob.created_at.desc()
+        )
+    jobs = s.exec(q).all()
+    topics = {
+        ls.id: ls.topic
+        for ls in (
+            s.exec(select(Landscape).where(Landscape.id.in_([j.landscape_id for j in jobs]))).all()
+            if jobs
+            else []
+        )
+    }
+    return [
+        JobSummary(
+            id=j.id,
+            landscape_id=j.landscape_id,
+            topic=topics.get(j.landscape_id),
+            stage=j.stage,
+            progress=j.progress,
+            error=j.error,
+            created_at=j.created_at,
+            started_at=j.started_at,
+            finished_at=j.finished_at,
+        )
+        for j in jobs
+    ]
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut)

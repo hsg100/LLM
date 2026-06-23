@@ -281,6 +281,23 @@ export async function submitReview(
   return apiPost<ReviewResult>(`/api/landscapes/${landscapeId}/review`, body);
 }
 
+export type JobSummary = {
+  id: string;
+  landscape_id: string;
+  topic: string | null;
+  stage: string;
+  progress: number;
+  error: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export async function getJobs(landscapeId?: string): Promise<JobSummary[]> {
+  const q = landscapeId ? `?landscape_id=${landscapeId}` : "";
+  return apiGet<JobSummary[]>(`/api/jobs${q}`);
+}
+
 export type PaperDetail = {
   paper: Paper;
   extraction: Record<string, any> | null;

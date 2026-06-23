@@ -54,6 +54,20 @@ class JobOut(BaseModel):
     finished_at: Optional[datetime] = None
 
 
+class JobSummary(BaseModel):
+    """Lightweight job row for the global Jobs index (no event list)."""
+
+    id: str
+    landscape_id: str
+    topic: Optional[str] = None
+    stage: str
+    progress: float
+    error: Optional[str] = None
+    created_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+
 # ---------------------------------------------------------------------------
 # Paper API shapes
 # ---------------------------------------------------------------------------

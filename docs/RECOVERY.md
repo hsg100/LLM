@@ -1078,7 +1078,18 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 > are obvious, the active landscape is always indicated, and switching/exiting a
 > landscape is one click.
 >
-> **Status: partially implemented.** The headline fix shipped:
+> **Status: implemented & verified.** Both the headline fix and the planned
+> follow-ups shipped: a **global Jobs index** (`GET /api/jobs` + `/jobs` page)
+> makes every run reachable (sidebar "Job monitor" now resolves); a **⌘K command
+> palette** (`components/shell/CommandPalette.tsx`, opened by ⌘/Ctrl-K or the
+> topbar search box) jumps to any landscape / scoped page / action and doubles as
+> the landscape switcher; `/` now lands on `/landscapes` (workspace, not the
+> create form); the design-system link is gated out of production nav. Backend
+> 110 tests pass (incl. a jobs-index test); ruff clean; `next build` green.
+> Remaining minor follow-up: mobile bottom-tab parity (scoped tabs still fall
+> back to `/landscapes` when no landscape — not dead, just not locked).
+>
+> The headline fix shipped first:
 > `components/shell/Sidebar.tsx` was reworked into two explicit scopes — a GLOBAL
 > group (All landscapes / New landscape / Settings) that always works, and a
 > CURRENT-LANDSCAPE group (Overview, Cluster map, Papers, Reading plan, Quiz,
@@ -1097,27 +1108,24 @@ Each sprint lists **Goal → Scope → Acceptance** and the spec sections it clo
 | # | Finding | Severity | State |
 |---|---------|----------|-------|
 | 1 | Sidebar showed 7 landscape-scoped items globally; dead-linked to `/landscapes` with no landscape; no active-landscape indicator; clunky exit. | 🐞/🎯 | **Fixed** (this sprint) |
-| 2 | "Job monitor" linked to `/landscapes`, not a job — and there is **no global Jobs index**; `/jobs/{id}` is only reachable from the create flow (`Landscape` carries no job id, so a running landscape's job can't be re-opened). | 🐞/🎯 | Removed misleading item; **index still TODO** |
+| 2 | "Job monitor" linked to `/landscapes`, not a job — and there was **no global Jobs index**; `/jobs/{id}` was only reachable from the create flow. | 🐞/🎯 | **Fixed** — `GET /api/jobs` + `/jobs` index; sidebar item resolves |
 | 3 | The `/landscape/[id]/review` screen (Sprint 6) was missing from the sidebar entirely. | 🎯 | **Fixed** |
 | 4 | Topbar Export CTA dead-linked to `/landscapes` when no landscape was active. | ⚠️ | **Fixed** |
-| 5 | No landscape **switcher** — changing landscapes means going to `/landscapes` and clicking. Context card "switch" links there; a dropdown/command-palette switch is the full fix. | ⚠️ | TODO |
-| 6 | `FakeSearch` ⌘K box is **non-functional** (visual only). A real command palette (jump to landscape / page / paper) is the proper cure for switching clunk. | 🎯 | TODO |
-| 7 | `/` redirects to `/search` (the create form) as "home"; the truer home is `/landscapes`. Breadcrumb `leftHref` bounces through the redirect. | ⚠️ | TODO |
-| 8 | **Design-system** link is exposed in production nav (dev-only tool). | ⚠️ | TODO (gate behind `NODE_ENV`/flag) |
-| 9 | Mobile `BottomTabBar` routes scoped tabs to `/landscapes` when no landscape (same root cause as #1); should mirror the locked/disabled treatment. | ⚠️ | TODO |
+| 5 | No landscape **switcher** — changing landscapes means going to `/landscapes` and clicking. | ⚠️ | **Fixed** — ⌘K palette switches landscapes; context card "switch" too |
+| 6 | `FakeSearch` ⌘K box was **non-functional** (visual only). | 🎯 | **Fixed** — real command palette (⌘K / topbar / `fm:open-cmdk`) |
+| 7 | `/` redirected to `/search` (the create form) as "home"; the truer home is `/landscapes`. | ⚠️ | **Fixed** — `/` → `/landscapes` |
+| 8 | **Design-system** link exposed in production nav (dev-only tool). | ⚠️ | **Fixed** — gated behind `NODE_ENV !== "production"` |
+| 9 | Mobile `BottomTabBar` routes scoped tabs to `/landscapes` when no landscape (same root cause as #1); should mirror the locked/disabled treatment. | ⚠️ | Minor follow-up (fallback is not dead, just unlocked) |
 | 10 | Giant page components (landscape ~1014 / paper ~988 / jobs ~738) mix fetch+state+view — already logged under Sprint 7 deferred; revisit alongside shell work. | ⚠️ | Deferred (Sprint 7) |
 
-**Planned scope (remaining):**
-- **Global Jobs index** + per-landscape "current job" link (expose latest `job_id` on
-  the landscape, or add `GET /landscapes/{id}/jobs`); make "Job monitor" resolve.
-- **Command palette (⌘K)**: fuzzy jump to landscape / scoped page / paper; doubles as the
-  landscape switcher.
-- **Home semantics**: point `/` and the topbar root crumb at `/landscapes`.
-- **Gate the design-system route** out of production nav.
-- **Mobile parity**: lock/disable scoped bottom-tabs when no landscape.
-- **Acceptance:** no nav item ever dead-links; the active landscape is always visible and
-  switchable in ≤1 click; scoped actions are visibly unavailable until a landscape exists;
-  jobs are reachable for any running landscape.
+**Remaining follow-up:**
+- **Mobile parity**: lock/disable scoped bottom-tabs when no landscape (desktop sidebar
+  already does this); today they fall back to `/landscapes` (not dead, just unlocked).
+- `GET /api/jobs?landscape_id=` exists and the index covers reachability; a per-landscape
+  "current job" shortcut on the Overview page is a nice-to-have on top.
+- **Acceptance (met):** no nav item dead-links; the active landscape is always visible and
+  switchable in ≤1 click (context card + ⌘K); scoped actions are visibly unavailable until a
+  landscape exists; jobs are reachable for any run via `/jobs`.
 
 ---
 

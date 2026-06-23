@@ -46,7 +46,8 @@ const SCOPED_ITEMS: Item[] = [
 
 const GLOBAL_ITEMS: { href: string; label: string; icon: ReactNode; isActive: (p: string) => boolean }[] = [
   { href: "/landscapes", label: "All landscapes", icon: <IconStack />, isActive: (p) => p === "/landscapes" },
-  { href: "/search", label: "New landscape", icon: <IconSearch />, isActive: (p) => p.startsWith("/search") || p.startsWith("/jobs/") },
+  { href: "/search", label: "New landscape", icon: <IconSearch />, isActive: (p) => p.startsWith("/search") },
+  { href: "/jobs", label: "Job monitor", icon: <IconJob />, isActive: (p) => p === "/jobs" || p.startsWith("/jobs/") },
   { href: "/settings", label: "Settings", icon: <IconGear />, isActive: (p) => p.startsWith("/settings") },
 ];
 
@@ -156,13 +157,15 @@ export function Sidebar() {
         )}
       </div>
 
-      <NavRow
-        href="/design-system"
-        icon={<span style={{ width: 9, height: 9, borderRadius: 3, background: "linear-gradient(135deg,#e0613a,#5b8def)" }} />}
-        label="Design system"
-        active={pathname.startsWith("/design-system")}
-        framed
-      />
+      {process.env.NODE_ENV !== "production" && (
+        <NavRow
+          href="/design-system"
+          icon={<span style={{ width: 9, height: 9, borderRadius: 3, background: "linear-gradient(135deg,#e0613a,#5b8def)" }} />}
+          label="Design system"
+          active={pathname.startsWith("/design-system")}
+          framed
+        />
+      )}
     </aside>
   );
 }
@@ -394,6 +397,14 @@ function IconSearch() {
     <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
       <circle cx="6.5" cy="6.5" r="4.3" stroke="currentColor" strokeWidth="1.3" />
       <path d="M9.8 9.8L13 13" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+function IconJob() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+      <circle cx="7.5" cy="7.5" r="6" stroke="currentColor" strokeWidth="1.3" strokeDasharray="3 2.4" />
+      <circle cx="7.5" cy="7.5" r="2" fill="currentColor" />
     </svg>
   );
 }

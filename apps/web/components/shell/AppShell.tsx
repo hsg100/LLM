@@ -2,6 +2,7 @@ import { ReactNode, Suspense } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { BottomTabBar } from "./BottomTabBar";
+import { CommandPalette } from "./CommandPalette";
 
 /**
  * Persistent app shell. On desktop (>=md): 256px sidebar + main column
@@ -67,6 +68,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <Suspense fallback={null}>
         <BottomTabBar />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <CommandPalette />
       </Suspense>
     </div>
   );
