@@ -328,3 +328,23 @@ export type ConceptMap = {
   nodes: { id: string; label: string; type: string }[];
   edges: { source: string; target: string; type: string }[];
 };
+
+export type GraphNode = {
+  paper: Paper;
+  score: number;
+  category: string;
+  cluster_id: string | null;
+};
+
+export type GraphEdge = {
+  source_paper_id: string;
+  target_paper_id: string;
+  type: string;
+  rationale: string | null;
+};
+
+export type PaperGraph = { nodes: GraphNode[]; edges: GraphEdge[] };
+
+export async function getLandscapeGraph(landscapeId: string): Promise<PaperGraph> {
+  return apiGet<PaperGraph>(`/api/landscapes/${landscapeId}/graph`);
+}
