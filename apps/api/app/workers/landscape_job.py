@@ -18,6 +18,7 @@ Per-paper LLM calls are isolated so one failure can't kill the job.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any, Optional
 
@@ -65,9 +66,11 @@ from app.services.pdf_storage import deterministic_pdf_filename, resolve_pdf_sto
 from app.services.quiz_generation import generate_quizzes_and_flashcards
 from app.services.ranking import rank_papers
 from app.services.relationships import generate_relationships
-from app.services.synthesis import synthesise
+from app.services.synthesis import synthesise_with_meta
 from app.services.vectors import has_embedding, to_list
 
+
+logger = logging.getLogger("fieldmap.worker")
 
 # Canonical ordered stages live in app.pipeline (shared with the API + frontend).
 STAGES = PIPELINE_STAGES
@@ -311,30 +314,46 @@ async def _run(job_id: str) -> None:
         _set_stage(job_id, "synthesising", 0.78, "Synthesising landscape")
         bundle = _load_landscape_bundle(job_id, paper_ids)
         llm_strong = get_llm(strong=True)
-        synthesis = await synthesise(
+        synthesis_result = await synthesise_with_meta(
             llm_strong,
             topic=topic,
             landscape_papers=bundle,
             timeout_seconds=settings.synthesis_timeout_seconds,
         )
+        synthesis = synthesis_result.synthesis
+        synthesis_meta = synthesis_result.meta()
         synthesis_dict = synthesis.model_dump()
-        synthesis_dict["content_quality"] = (
-            "degraded"
-            if extraction_quality.get("content_quality") == "degraded"
-            else synthesis_dict.get("content_quality") or extraction_quality.get("content_quality", "ok")
-        )
+        # content_quality is honest: degraded if extraction was weak OR the
+        # synthesis itself degraded (named cause in synthesis_meta).
+        if extraction_quality.get("content_quality") == "degraded" or synthesis_result.degraded:
+            synthesis_dict["content_quality"] = "degraded"
+        else:
+            synthesis_dict["content_quality"] = (
+                synthesis_dict.get("content_quality") or extraction_quality.get("content_quality", "ok")
+            )
         synthesis_dict["extraction_quality"] = extraction_quality
+        synthesis_dict["synthesis_quality"] = synthesis_meta
         refreshed_bundle = _persist_synthesis(job_id, synthesis_dict, bundle)
+        if synthesis_result.degraded and synthesis_result.cause not in {"no_papers", "stub"}:
+            _append_event(
+                job_id,
+                "synthesising",
+                f"Synthesis degraded ({synthesis_result.cause})"
+                + (f": {synthesis_result.detail}" if synthesis_result.detail else ""),
+                0.83,
+                meta=synthesis_meta,
+            )
         _append_event(
             job_id,
             "synthesising",
-            "Synthesis ready",
+            "Synthesis ready" if not synthesis_result.degraded else "Synthesis ready (auto-generated outline)",
             0.84,
             meta={
                 "content_quality": synthesis_dict.get("content_quality"),
                 "clusters": len(synthesis_dict.get("clusters") or []),
                 "reading_path_items": len(synthesis_dict.get("reading_path") or []),
                 "field_structure_generated": synthesis_dict.get("field_structure_generated", False),
+                **synthesis_meta,
             },
         )
 
@@ -1014,8 +1033,9 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
         landscape = s.get(Landscape, landscape_id)
         if landscape is None:
             return []
-        landscape.synthesis = synthesis_dict
-        s.add(landscape)
+        # ``landscape.synthesis`` is assigned once, at the end of this function,
+        # after identity-resolution telemetry has been folded in (JSONB columns
+        # don't track in-place mutation, so we set the final object once).
 
         # Replace prior clusters (and their cluster_paper links).
         prior_clusters = s.exec(select(Cluster).where(Cluster.landscape_id == landscape_id)).all()
@@ -1039,15 +1059,29 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
             ).all()
         }
 
+        # Track how synthesis paper references resolve so the paper-identity
+        # seam (RECOVERY §4.2) is observable: id_hit (clean), title_fallback
+        # (brittle, the prompt asks for ids), unmatched (dropped reference).
+        ident = {"id_hit": 0, "title_fallback": 0, "unmatched": 0}
+
+        def _resolve_ref(ref: Any, *, title: Any = None) -> Optional[str]:
+            if ref in bundle_pids:
+                ident["id_hit"] += 1
+                return ref  # type: ignore[return-value]
+            pid = title_to_pid.get(ref) or (title_to_pid.get(title) if title else None)
+            if pid:
+                ident["title_fallback"] += 1
+                return pid
+            ident["unmatched"] += 1
+            return None
+
         # Synthesis owns the user-facing rationale ("why read / why skip"),
         # replacing ranking's metric string. Resolve by paper_id (id-first).
         for item in synthesis_dict.get("paper_rationales") or []:
             if not isinstance(item, dict):
                 continue
-            pid = item.get("paper_id")
             text = str(item.get("rationale") or "").strip()
-            if pid not in bundle_pids:
-                pid = title_to_pid.get(item.get("paper_id"))
+            pid = _resolve_ref(item.get("paper_id"))
             link = links_by_pid.get(pid) if pid else None
             if link is not None and text:
                 link.rationale = text[:500]
@@ -1063,7 +1097,7 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
             s.add(row)
             s.flush()
             for pid_or_title in c.get("paper_ids") or []:
-                paper_id = pid_or_title if pid_or_title in bundle_pids else title_to_pid.get(pid_or_title)
+                paper_id = _resolve_ref(pid_or_title)
                 if paper_id:
                     s.add(ClusterPaper(cluster_id=row.id, paper_id=paper_id))
                     # Set landscape_paper cluster + reading order
@@ -1073,15 +1107,29 @@ def _persist_synthesis(job_id: str, synthesis_dict: dict[str, Any], bundle: list
                         s.add(link)
 
         for step_idx, step in enumerate(synthesis_dict.get("reading_path") or []):
-            pid = step.get("paper_id")
-            if pid not in bundle_pids:
-                pid = title_to_pid.get(step.get("title"))
+            pid = _resolve_ref(step.get("paper_id"), title=step.get("title"))
             if not pid:
                 continue
             link = links_by_pid.get(pid)
             if link is not None:
                 link.reading_order = step_idx + 1
                 s.add(link)
+
+        if ident["title_fallback"] or ident["unmatched"]:
+            logger.warning(
+                "synthesis_identity_resolution landscape=%s id_hit=%d title_fallback=%d unmatched=%d",
+                landscape_id,
+                ident["id_hit"],
+                ident["title_fallback"],
+                ident["unmatched"],
+            )
+        # Surface identity resolution into the persisted synthesis telemetry.
+        sq = synthesis_dict.get("synthesis_quality")
+        if isinstance(sq, dict):
+            sq["identity_resolution"] = ident
+        # Assign a fresh dict so SQLAlchemy reliably detects the JSONB change.
+        landscape.synthesis = dict(synthesis_dict)
+        s.add(landscape)
 
         refreshed_bundle: list[dict[str, Any]] = []
         for b in bundle:

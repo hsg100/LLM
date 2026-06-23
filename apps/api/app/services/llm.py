@@ -328,6 +328,64 @@ def _raise_for_status(
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 _OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def _strip_trailing_commas(text: str) -> str:
+    """Remove ``,}`` / ``,]`` sequences that some models emit."""
+    prev = None
+    while prev != text:
+        prev = text
+        text = _TRAILING_COMMA_RE.sub(r"\1", text)
+    return text
+
+
+def _repair_truncated_json(text: str) -> Optional[dict[str, Any]]:
+    """Best-effort salvage of a JSON object cut off mid-stream.
+
+    Walks the text tracking string/escape state, closes any still-open
+    ``[`` / ``{`` brackets (and a dangling open string), then parses. This
+    rescues responses truncated by ``max_tokens`` where the prefix is valid.
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+    text = text[start:]
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    last_safe = 0  # index just past the last char that could end a value
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+                last_safe = i + 1
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+            last_safe = i + 1
+        elif ch in "0123456789truefalsenull.-+eE":
+            last_safe = i + 1
+    # Truncate to the last completed value, drop a dangling key/comma, and close.
+    candidate = text[:last_safe].rstrip().rstrip(",")
+    closing = "".join("}" if b == "{" else "]" for b in reversed(stack))
+    for attempt in (candidate + closing, _strip_trailing_commas(candidate) + closing):
+        try:
+            parsed = json.loads(attempt)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            continue
+    return None
 
 
 def _try_parse_json(raw: str) -> Optional[dict[str, Any]]:
@@ -346,11 +404,17 @@ def _try_parse_json(raw: str) -> Optional[dict[str, Any]]:
             pass
     m = _OBJECT_RE.search(raw)
     if m:
+        candidate = m.group(0)
         try:
-            return json.loads(m.group(0))
+            return json.loads(candidate)
         except Exception:
             pass
-    return None
+        try:
+            return json.loads(_strip_trailing_commas(candidate))
+        except Exception:
+            pass
+    # Last resort: salvage a truncated / lightly malformed object.
+    return _repair_truncated_json(raw)
 
 
 def _stub_response(prompt: str) -> str:

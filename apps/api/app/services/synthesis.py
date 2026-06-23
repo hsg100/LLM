@@ -18,15 +18,30 @@ import re
 from collections import Counter
 from typing import Any, Optional
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from app.schemas import FieldStructure, Synthesis
-from app.services.llm import LLMProvider
+from app.schemas import (
+    ClusterOut,
+    FieldEdge,
+    FieldNode,
+    FieldStructure,
+    PaperRationale,
+    ReadingPathStep,
+    Synthesis,
+)
+from app.services.llm import LLMHTTPError, LLMProvider
 from app.services.prompts import render
+
+
+# When the full papers bundle overflows the model's context (HTTP 400) we retry
+# with a compact bundle, mirroring extraction.py's compact-retry strategy.
+COMPACT_PAPERS_LIMIT = 28
 
 
 def build_papers_json(
     landscape_papers: list[dict[str, Any]],
+    *,
+    compact: bool = False,
 ) -> str:
     """Serialize the per-paper bundle that the synthesis prompt consumes.
 
@@ -40,40 +55,101 @@ def build_papers_json(
             "extraction": {...}  # may be partial
         }
     """
+    # ``compact`` caps the paper count and drops the bulkier list fields so the
+    # prompt fits a smaller context window on the HTTP-400 retry.
+    papers = landscape_papers[:COMPACT_PAPERS_LIMIT] if compact else landscape_papers
     trimmed = []
-    for p in landscape_papers:
+    for p in papers:
         ext = p.get("extraction") or {}
         grounding = (ext.get("_fieldmap") or {}).get("grounding") or {}
-        trimmed.append(
-            {
-                "paper_id": p.get("paper_id"),
-                "title": p.get("title"),
-                "year": p.get("year"),
-                "category": p.get("category"),
-                "score": p.get("score"),
-                "degraded": (ext.get("_fieldmap") or {}).get("degraded", False),
-                "fallback_reason": (ext.get("_fieldmap") or {}).get("fallback_reason"),
-                "grounded_fields": grounding.get("grounded_fields", 0),
-                "ungrounded_fields": grounding.get("ungrounded_fields", 0),
-                "average_grounding_confidence": grounding.get("average_grounding_confidence", 0.0),
-                "problem": ext.get("problem"),
-                "method": ext.get("method"),
-                "contribution": ext.get("contribution"),
-                "novelty": ext.get("novelty"),
-                "results": ext.get("results", [])[:4],
-                "limitations": ext.get("limitations", [])[:3],
-                "datasets": ext.get("datasets", []),
-                "benchmarks": ext.get("benchmarks", []),
-                "baselines": ext.get("baselines", []),
-                "metrics": ext.get("metrics", []),
-                "prerequisites": ext.get("prerequisites", []),
-                "key_terms": ext.get("key_terms", []),
-                "related_papers": ext.get("related_papers", []),
-                "reading_priority": ext.get("reading_priority"),
-                "difficulty_level": ext.get("difficulty_level"),
-            }
-        )
-    return json.dumps(trimmed, ensure_ascii=False, indent=2)
+        row: dict[str, Any] = {
+            "paper_id": p.get("paper_id"),
+            "title": p.get("title"),
+            "year": p.get("year"),
+            "category": p.get("category"),
+            "score": p.get("score"),
+            "degraded": (ext.get("_fieldmap") or {}).get("degraded", False),
+            "problem": ext.get("problem"),
+            "method": ext.get("method"),
+            "contribution": ext.get("contribution"),
+            "novelty": ext.get("novelty"),
+            "key_terms": ext.get("key_terms", []),
+            "reading_priority": ext.get("reading_priority"),
+        }
+        if not compact:
+            row.update(
+                {
+                    "fallback_reason": (ext.get("_fieldmap") or {}).get("fallback_reason"),
+                    "grounded_fields": grounding.get("grounded_fields", 0),
+                    "ungrounded_fields": grounding.get("ungrounded_fields", 0),
+                    "average_grounding_confidence": grounding.get("average_grounding_confidence", 0.0),
+                    "results": ext.get("results", [])[:4],
+                    "limitations": ext.get("limitations", [])[:3],
+                    "datasets": ext.get("datasets", []),
+                    "benchmarks": ext.get("benchmarks", []),
+                    "baselines": ext.get("baselines", []),
+                    "metrics": ext.get("metrics", []),
+                    "prerequisites": ext.get("prerequisites", []),
+                    "related_papers": ext.get("related_papers", []),
+                    "difficulty_level": ext.get("difficulty_level"),
+                }
+            )
+        trimmed.append(row)
+    indent = None if compact else 2
+    return json.dumps(trimmed, ensure_ascii=False, indent=indent)
+
+
+# Synthesis outcome causes surfaced to job telemetry. ``real`` = a genuine,
+# LLM-authored synthesis; everything else is an honest, labelled degrade.
+SYNTHESIS_CAUSES = {
+    "real",  # LLM produced a usable synthesis
+    "no_papers",  # nothing to synthesise
+    "stub",  # offline/dev stub provider — never a real synthesis
+    "json_parse",  # model returned unparseable JSON after the retry
+    "validation",  # parsed JSON but the whole object failed even after salvage
+    "timeout",  # exceeded synthesis_timeout_seconds
+    "http_400",  # over-long prompt / bad request; compact retry also failed
+    "http_error",  # other HTTP failure from the provider
+    "empty_fields",  # parsed/validated but the LLM produced no usable content
+    "error",  # unexpected exception
+}
+
+
+class SynthesisResult:
+    """A synthesis plus structured telemetry about how it was produced.
+
+    ``degraded`` is True whenever the output is not a genuine LLM synthesis, so
+    callers can label the UI honestly and emit a job event naming ``cause``.
+    """
+
+    __slots__ = ("synthesis", "cause", "degraded", "salvaged_fields", "detail", "retry_used")
+
+    def __init__(
+        self,
+        synthesis: Synthesis,
+        *,
+        cause: str,
+        degraded: bool,
+        salvaged_fields: Optional[list[str]] = None,
+        detail: Optional[str] = None,
+        retry_used: bool = False,
+    ) -> None:
+        self.synthesis = synthesis
+        self.cause = cause
+        self.degraded = degraded
+        self.salvaged_fields = salvaged_fields or []
+        self.detail = detail
+        self.retry_used = retry_used
+
+    def meta(self) -> dict[str, Any]:
+        return {
+            "synthesis_method": "deterministic" if self.degraded else "llm",
+            "synthesis_cause": self.cause,
+            "synthesis_degraded": self.degraded,
+            "synthesis_salvaged_fields": self.salvaged_fields,
+            "synthesis_retry_used": self.retry_used,
+            "synthesis_detail": self.detail,
+        }
 
 
 async def synthesise(
@@ -84,41 +160,262 @@ async def synthesise(
     strong_model: Optional[str] = None,
     timeout_seconds: Optional[int] = None,
 ) -> Synthesis:
+    """Backwards-compatible entry point returning just the ``Synthesis``.
+
+    Prefer :func:`synthesise_with_meta` to obtain the quality telemetry.
+    """
+    result = await synthesise_with_meta(
+        llm,
+        topic=topic,
+        landscape_papers=landscape_papers,
+        strong_model=strong_model,
+        timeout_seconds=timeout_seconds,
+    )
+    return result.synthesis
+
+
+async def synthesise_with_meta(
+    llm: LLMProvider,
+    *,
+    topic: str,
+    landscape_papers: list[dict[str, Any]],
+    strong_model: Optional[str] = None,
+    timeout_seconds: Optional[int] = None,
+) -> SynthesisResult:
     skeleton = _deterministic_skeleton(landscape_papers)
     if not landscape_papers:
-        return skeleton
+        return SynthesisResult(skeleton, cause="no_papers", degraded=True)
 
-    user_prompt = render(
-        "synthesis",
+    # The offline stub never produces a real synthesis; degrade honestly rather
+    # than dressing its placeholder JSON up as a genuine landscape.
+    if getattr(llm, "name", "") == "stub":
+        return SynthesisResult(skeleton, cause="stub", degraded=True)
+
+    raw, fetch_meta = await _fetch_synthesis_json(
+        llm,
         topic=topic,
-        papers_json=build_papers_json(landscape_papers),
+        landscape_papers=landscape_papers,
+        strong_model=strong_model,
+        timeout_seconds=timeout_seconds,
     )
-    messages = [
-        {"role": "system", "content": "You are a research-landscape synthesiser. Output valid JSON only."},
-        {"role": "user", "content": user_prompt},
-    ]
+    if raw is None:
+        return SynthesisResult(
+            skeleton,
+            cause=fetch_meta["cause"],
+            degraded=True,
+            detail=fetch_meta.get("detail"),
+            retry_used=fetch_meta.get("retry_used", False),
+        )
+
+    synth, salvaged = _validate_with_salvage(raw, skeleton)
+    if synth is None:
+        return SynthesisResult(
+            skeleton,
+            cause="validation",
+            degraded=True,
+            detail="response failed validation even after partial salvage",
+            retry_used=fetch_meta.get("retry_used", False),
+        )
+
+    # The DAG is "generated" only if the LLM authored at least one VALID node.
+    # We read this straight off the raw response (validating nodes individually)
+    # so the deterministic fallback that _merge_with_skeleton / salvage inject is
+    # never mistaken for an LLM-authored structure.
+    fs_raw = raw.get("field_structure") if isinstance(raw, dict) else None
+    llm_authored_fs = bool(_validate_each(fs_raw.get("nodes"), FieldNode)) if isinstance(fs_raw, dict) else False
+
+    result = _merge_with_skeleton(synth, skeleton)
+    data = result.model_dump()
+    data["field_structure_generated"] = llm_authored_fs and bool(
+        (data.get("field_structure") or {}).get("nodes")
+    )
+    final = Synthesis.model_validate(data)
+
+    # Honest "did we actually synthesise anything?" check: a real synthesis must
+    # have at least overview prose OR clusters OR a reading path the LLM authored.
+    has_real_content = bool(
+        _clean_field(final.field_overview)
+        or final.clusters
+        or final.reading_path
+        or data["field_structure_generated"]
+    )
+    if not has_real_content:
+        return SynthesisResult(
+            final,
+            cause="empty_fields",
+            degraded=True,
+            salvaged_fields=salvaged,
+            detail="model returned no usable overview/clusters/reading-path/structure",
+            retry_used=fetch_meta.get("retry_used", False),
+        )
+
+    return SynthesisResult(
+        final,
+        cause="real",
+        degraded=False,
+        salvaged_fields=salvaged,
+        retry_used=fetch_meta.get("retry_used", False),
+    )
+
+
+async def _fetch_synthesis_json(
+    llm: LLMProvider,
+    *,
+    topic: str,
+    landscape_papers: list[dict[str, Any]],
+    strong_model: Optional[str],
+    timeout_seconds: Optional[int],
+) -> tuple[Optional[dict[str, Any]], dict[str, Any]]:
+    """Call the LLM, with a compact retry on HTTP 400 (over-long prompt).
+
+    Returns ``(raw_json_or_None, meta)``; ``meta['cause']`` names the failure
+    when ``raw`` is None (timeout / http_400 / http_error / json_parse / error).
+    """
+
+    async def _call(compact: bool, stage: str) -> dict[str, Any]:
+        user_prompt = render(
+            "synthesis",
+            topic=topic,
+            papers_json=build_papers_json(landscape_papers, compact=compact),
+        )
+        messages = [
+            {"role": "system", "content": "You are a research-landscape synthesiser. Output valid JSON only."},
+            {"role": "user", "content": user_prompt},
+        ]
+        call = llm.complete_json(messages, model=strong_model, stage=stage)
+        if timeout_seconds:
+            return await asyncio.wait_for(call, timeout=timeout_seconds)
+        return await call
 
     try:
-        call = llm.complete_json(messages, model=strong_model, stage="synthesis")
-        raw = await asyncio.wait_for(call, timeout=timeout_seconds) if timeout_seconds else await call
-        llm_provided_fs = bool((raw.get("field_structure") or {}).get("nodes")) if isinstance(raw, dict) else False
+        raw = await _call(compact=False, stage="synthesis")
+        return raw, {"cause": "real", "retry_used": False}
+    except asyncio.TimeoutError:
+        return None, {"cause": "timeout", "detail": f"exceeded {timeout_seconds}s", "retry_used": False}
+    except LLMHTTPError as e:
+        if e.status_code == 400:
+            # Over-long prompt / bad request — retry with a compact bundle.
+            try:
+                raw = await _call(compact=True, stage="synthesis_retry_compact")
+                return raw, {"cause": "real", "retry_used": True}
+            except asyncio.TimeoutError:
+                return None, {"cause": "timeout", "detail": "compact retry timed out", "retry_used": True}
+            except Exception as retry_e:  # noqa: BLE001
+                return None, {
+                    "cause": "http_400",
+                    "detail": f"compact retry failed: {_safe_error(retry_e)}",
+                    "retry_used": True,
+                }
+        return None, {"cause": "http_error", "detail": f"HTTP {e.status_code}", "retry_used": False}
+    except ValueError as e:
+        # complete_json raises ValueError when JSON can't be parsed after retry.
+        return None, {"cause": "json_parse", "detail": _safe_error(e), "retry_used": False}
+    except Exception as e:  # noqa: BLE001
+        return None, {"cause": "error", "detail": _safe_error(e), "retry_used": False}
+
+
+def _safe_error(e: BaseException) -> str:
+    return f"{type(e).__name__}: {e}"[:300]
+
+
+def _validate_each(items: Any, model: type[BaseModel]) -> list[dict[str, Any]]:
+    """Validate a list item-by-item, keeping only the ones that pass.
+
+    This is the core of partial-field salvage: one malformed cluster / reading
+    step / node / edge no longer sinks the entire synthesis.
+    """
+    out: list[dict[str, Any]] = []
+    if not isinstance(items, list):
+        return out
+    for item in items:
         try:
-            synth = Synthesis.model_validate(raw)
+            out.append(model.model_validate(item).model_dump())
         except ValidationError:
-            merged = skeleton.model_dump()
-            for k in merged.keys():
-                if k in raw:
-                    merged[k] = raw[k]
-            synth = Synthesis.model_validate(merged)
-        result = _merge_with_skeleton(synth, skeleton)
-        # The DAG is "generated" only if the LLM authored it (and it survived).
-        data = result.model_dump()
-        data["field_structure_generated"] = llm_provided_fs and bool(
-            (data.get("field_structure") or {}).get("nodes")
-        )
-        return Synthesis.model_validate(data)
-    except Exception:  # noqa: BLE001
-        return skeleton
+            continue
+    return out
+
+
+def _validate_with_salvage(
+    raw: dict[str, Any],
+    skeleton: Synthesis,
+) -> tuple[Optional[Synthesis], list[str]]:
+    """Validate the synthesis, salvaging good nested items if the whole fails.
+
+    Returns ``(synthesis_or_None, salvaged_field_names)``. First tries strict
+    validation; on failure, rebuilds from the skeleton, copying scalar/string
+    fields wholesale and filtering each list field item-by-item so partial LLM
+    output survives.
+    """
+    try:
+        return Synthesis.model_validate(raw), []
+    except ValidationError:
+        pass
+    if not isinstance(raw, dict):
+        return None, []
+
+    base = skeleton.model_dump()
+    salvaged: list[str] = []
+
+    # Scalar / free-text fields: copy if the LLM provided a non-empty value.
+    for key in ("field_overview", "why_it_matters", "content_quality"):
+        if isinstance(raw.get(key), str) and raw[key].strip():
+            base[key] = raw[key]
+            salvaged.append(key)
+
+    # Plain string-list fields.
+    for key in (
+        "must_read_paper_ids",
+        "prerequisites",
+        "datasets_benchmarks",
+        "tensions",
+        "open_problems",
+        "project_ideas",
+        "skip_for_now",
+    ):
+        val = raw.get(key)
+        if isinstance(val, list):
+            cleaned = [str(x) for x in val if str(x).strip()]
+            if cleaned:
+                base[key] = cleaned
+                salvaged.append(key)
+
+    # Structured list fields: validate each item, drop the bad ones.
+    item_models: list[tuple[str, type[BaseModel]]] = [
+        ("clusters", ClusterOut),
+        ("reading_path", ReadingPathStep),
+        ("paper_rationales", PaperRationale),
+    ]
+    for key, model in item_models:
+        good = _validate_each(raw.get(key), model)
+        if good:
+            base[key] = good
+            salvaged.append(key)
+
+    # method_timeline is a list[dict]; keep dict items as-is.
+    if isinstance(raw.get("method_timeline"), list):
+        tl = [x for x in raw["method_timeline"] if isinstance(x, dict)]
+        if tl:
+            base["method_timeline"] = tl
+            salvaged.append("method_timeline")
+
+    # field_structure: salvage nodes/edges independently.
+    fs = raw.get("field_structure")
+    if isinstance(fs, dict):
+        nodes = _validate_each(fs.get("nodes"), FieldNode)
+        node_ids = {n["id"] for n in nodes}
+        edges = [
+            e
+            for e in _validate_each(fs.get("edges"), FieldEdge)
+            if e["source"] in node_ids and e["target"] in node_ids and e["source"] != e["target"]
+        ]
+        if nodes:
+            base["field_structure"] = {"nodes": nodes, "edges": edges}
+            salvaged.append("field_structure")
+
+    try:
+        return Synthesis.model_validate(base), salvaged
+    except ValidationError:
+        return None, salvaged
 
 
 def _deterministic_skeleton(landscape_papers: list[dict[str, Any]]) -> Synthesis:

@@ -467,6 +467,53 @@ field-structure nodes), Relationships (§3.7), Landscape UI (§3.12), Export
 
 **Decisions needed.** Acceptable degraded UX when synthesis LLM fails — show
 skeleton labelled as such, or block the landscape as "incomplete"?
+*(Resolved — decision #9: labelled skeleton.)*
+
+**Status: reliability + quality hardening implemented & verified
+(Sprint 5 follow-on).** The single biggest defect — `synthesise()` wrapping the
+whole call in `try/except Exception: return skeleton`, which silently collapsed
+*every* failure (parse error, one bad nested item, timeout, HTTP 400,
+validation) to the deterministic skeleton with no diagnostics — is gone.
+What changed:
+
+- **Structured outcome + telemetry.** `synthesise_with_meta()` (new entry point;
+  `synthesise()` kept as a thin wrapper) returns a `SynthesisResult` carrying a
+  named `cause` (`real` / `no_papers` / `stub` / `json_parse` / `validation` /
+  `timeout` / `http_400` / `http_error` / `empty_fields` / `error`) and a
+  `degraded` flag. The worker now emits a `synthesising` job event naming the
+  exact cause when it degrades, persists `synthesis.synthesis_quality`, and sets
+  `content_quality="degraded"` honestly (the FE banner already labels it as an
+  "auto-generated outline" per decision #9).
+- **Partial-field salvage.** `_validate_with_salvage` validates each nested item
+  (clusters / reading_path / paper_rationales / field-structure nodes & edges)
+  **item-by-item**, so one malformed cluster or out-of-range node no longer sinks
+  the entire synthesis — the good content survives and the run still counts as
+  `real`.
+- **JSON robustness.** `_try_parse_json` (llm.py) now strips trailing commas and
+  salvages truncated objects (max_tokens cut-offs) by closing open
+  brackets/strings, on top of the existing fence/prose handling.
+- **Token budget / compact retry.** `build_papers_json(..., compact=True)` trims
+  the bundle (cap count, drop bulky list fields); on an HTTP 400 the synthesis
+  call retries with the compact bundle, mirroring extraction.py.
+- **`field_structure_generated` is now honest:** True only when ≥1 LLM node
+  survives validation; the deterministic fallback is never mislabelled as
+  LLM-authored.
+- **Identity seam (§4.2) made observable.** The synthesis prompt hard-demands
+  exact `paper_id` echoes; `_persist_synthesis` counts how references resolve
+  (`id_hit` / `title_fallback` / `unmatched`), logs fallbacks, and folds the
+  counts into `synthesis.synthesis_quality.identity_resolution`. Title matching
+  remains a last resort only.
+
+Tests: `tests/test_synthesis_reliability.py` covers each failure mode
+(parse/truncation, one-bad-item salvage, timeout, validation, empty, HTTP 400
+compact retry, non-400 error, stub gating, compact-bundle sizing,
+field-structure-generated honesty) plus a DB-backed identity-resolution test.
+Verified: ruff clean, 109 tests pass (DB-backed on pgvector PG16), Alembic
+`upgrade head` + autogenerate drift-clean (no model changes), `next build` green.
+**Deferred (unchanged):** decomposing the one-giant-prompt into a multi-pass
+design (current single prompt + salvage is reliable enough); citation-edge
+seeding for the DAG; a dedicated field-structure UI (graph viz lands in Sprint 7
+scope).
 
 ---
 
