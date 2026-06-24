@@ -22,6 +22,29 @@ def _db_available() -> bool:
 dbonly = pytest.mark.skipif(not _db_available(), reason="requires Postgres")
 
 
+def _admin_token() -> str:
+    """Seed accounts and return a valid admin bearer token."""
+    from app.config import get_settings
+    from app.services.auth import create_token
+    from app.users import ADMIN_USER_ID, ensure_seed_users
+
+    with session_scope() as s:
+        ensure_seed_users(s)
+    _ = get_settings()
+    return create_token(ADMIN_USER_ID)
+
+
+@dbonly
+def test_create_landscape_requires_auth():
+    from starlette.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    r = client.post("/api/landscapes", json={"topic": "RAG evaluation"})
+    assert r.status_code == 401
+
+
 @dbonly
 def test_create_landscape_rejects_offtopic_topic():
     from starlette.testclient import TestClient
@@ -29,14 +52,79 @@ def test_create_landscape_rejects_offtopic_topic():
     from app.main import app
 
     client = TestClient(app)
+    auth = {"Authorization": f"Bearer {_admin_token()}"}
     for bad in ("gta", "Bonnie Blue", "$$$$"):
-        r = client.post("/api/landscapes", json={"topic": bad})
+        r = client.post("/api/landscapes", json={"topic": bad}, headers=auth)
         assert r.status_code == 422, f"{bad!r} should be rejected"
         assert "detail" in r.json()
 
     # And no rows leaked for the rejected topics.
     with session_scope() as s:
         assert not s.exec(select(Landscape).where(Landscape.topic == "gta")).all()
+
+
+@dbonly
+def test_login_and_admin_delete_landscape():
+    from starlette.testclient import TestClient
+
+    from app.config import get_settings
+    from app.users import ensure_seed_users
+
+    from app.main import app
+
+    with session_scope() as s:
+        ensure_seed_users(s)
+    settings = get_settings()
+    client = TestClient(app)
+
+    # Bad password rejected.
+    assert client.post(
+        "/api/auth/login", json={"email": settings.admin_email, "password": "nope"}
+    ).status_code == 401
+
+    # Admin login works and reports admin.
+    r = client.post(
+        "/api/auth/login",
+        json={"email": settings.admin_email, "password": settings.admin_password},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["user"]["is_admin"] is True
+    admin_auth = {"Authorization": f"Bearer {body['token']}"}
+
+    # Demo user is not an admin and cannot delete.
+    demo = client.post(
+        "/api/auth/login",
+        json={"email": settings.demo_user_email, "password": settings.demo_user_password},
+    ).json()
+    demo_auth = {"Authorization": f"Bearer {demo['token']}"}
+
+    ls_id = None
+    try:
+        # Insert directly so the test doesn't depend on Redis/the job queue.
+        with session_scope() as s:
+            ls = Landscape(topic="RAG evaluation")
+            s.add(ls)
+            s.flush()
+            ls_id = ls.id
+
+        assert client.delete(f"/api/landscapes/{ls_id}", headers=demo_auth).status_code == 403
+        assert client.delete(f"/api/landscapes/{ls_id}").status_code == 401
+
+        r = client.delete(f"/api/landscapes/{ls_id}", headers=admin_auth)
+        assert r.status_code == 200 and r.json()["deleted"] is True
+        with session_scope() as s:
+            assert s.get(Landscape, ls_id) is None
+        ls_id = None
+    finally:
+        if ls_id:
+            from app.services.landscape_cleanup import delete_landscape_cascade
+
+            with session_scope() as s:
+                try:
+                    delete_landscape_cascade(s, ls_id)
+                except Exception:  # noqa: BLE001
+                    pass
 
 
 @dbonly

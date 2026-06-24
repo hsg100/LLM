@@ -116,7 +116,24 @@ ENABLE_DEV_FALLBACK=false
 ENABLE_EMBEDDING_DEV_FALLBACK=false
 PDF_STORAGE_DIR=/data/pdfs
 OBSIDIAN_EXPORT_REPO_PATH=/data/obsidian
+# --- Auth (login is required in production) ---
+AUTH_SECRET=<long random string>          # MUST set; signs session tokens
+ADMIN_EMAIL=admin@yourdomain.com
+ADMIN_PASSWORD=<long random password>     # change from the default
+DEMO_USER_EMAIL=demo@yourdomain.com
+DEMO_USER_PASSWORD=<password>
 ```
+
+Auth notes:
+
+- `REQUIRE_AUTH` defaults to `true`; the UI blocks all entry until login and
+  `POST /api/landscapes` / `DELETE /api/landscapes/{id}` require a valid token.
+- The admin + demo accounts are seeded/updated from these env vars at API
+  startup. Rotating `ADMIN_PASSWORD` and restarting updates the credential.
+- Set a strong `AUTH_SECRET`. If left at the insecure default in production the
+  API logs a loud warning at startup. Changing it invalidates existing tokens
+  (everyone must log in again).
+- Only the admin account can delete landscapes (used to clean up spam).
 
 For Vercel preview deployments, either add each preview origin to `CORS_ALLOWED_ORIGINS`, or set `CORS_ALLOWED_ORIGIN_REGEX` to a tightly scoped Vercel pattern for your project/team. Do not use wildcard CORS in production.
 

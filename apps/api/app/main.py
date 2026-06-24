@@ -10,7 +10,7 @@ from app.api.routes import router
 from app.config import get_settings
 from app.db import init_db, session_scope
 from app.services.embeddings import embedding_metadata, get_embedding_provider, validate_embedding_configuration
-from app.users import ensure_default_user
+from app.users import ensure_default_user, ensure_seed_users
 from app.workers.queue import wait_for_redis
 
 
@@ -31,6 +31,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         s.embedding_provider,
     )
     validate_embedding_configuration(s)
+    if not s.is_development and s.auth_secret == "dev-insecure-auth-secret-change-me":
+        logger.warning(
+            "SECURITY: AUTH_SECRET is the insecure default in a non-development "
+            "environment. Set AUTH_SECRET to a long random string."
+        )
     try:
         wait_for_redis()
     except Exception as e:  # noqa: BLE001 — keep API up so /health works for debugging
@@ -39,6 +44,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         init_db()
         with session_scope() as session:
             ensure_default_user(session)
+            ensure_seed_users(session)
     except Exception as e:  # noqa: BLE001
         logger.error("api startup: init_db failed: %s", e)
     yield

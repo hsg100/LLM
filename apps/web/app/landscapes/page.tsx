@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { apiGet, Landscape } from "../../lib/api";
+import { DeleteLandscapeButton } from "../../components/landscapes/DeleteLandscapeButton";
 
 export const dynamic = "force-dynamic";
 
@@ -164,6 +165,7 @@ export default async function LandscapesList() {
                 <SmallLink href={`/landscape/${r.id}/map`}>Map</SmallLink>
                 <SmallLink href={`/landscape/${r.id}/quiz`}>Quiz</SmallLink>
                 <SmallLink href={`/landscape/${r.id}/flashcards`}>Cards</SmallLink>
+                <DeleteLandscapeButton id={r.id} topic={r.topic} />
               </div>
             </div>
           ))}

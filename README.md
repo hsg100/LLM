@@ -243,6 +243,36 @@ For topic `RAG evaluation` a user gets:
 - Git-backed Obsidian markdown export (button on landscape page →
   `POST /api/landscapes/{id}/export/obsidian`)
 
+## Authentication
+
+The UI is gated behind a login (`POST /api/auth/login` → signed session token,
+stored client-side and sent as `Authorization: Bearer <token>`). This is the
+primary spam gate: `POST /api/landscapes` and `DELETE /api/landscapes/{id}`
+require a valid token, and the whole web app blocks entry until you sign in.
+
+Two accounts are seeded/updated at API startup from settings (override in
+`.env`):
+
+- **Admin** (`ADMIN_EMAIL` / `ADMIN_PASSWORD`) — can delete landscapes
+  (spam cleanup) via the Delete button on the Landscapes page.
+- **Demo member** (`DEMO_USER_EMAIL` / `DEMO_USER_PASSWORD`) — normal access,
+  cannot delete.
+
+Defaults (development only — change in production):
+
+| Role  | Email                  | Password             |
+|-------|------------------------|----------------------|
+| Admin | `admin@fieldmap.local` | `FieldMap-Admin-2026` |
+| Demo  | `demo@fieldmap.local`  | `FieldMap-Demo-2026`  |
+
+Set `AUTH_SECRET` to a long random string in production (it signs tokens; the
+API warns at startup if left at the insecure default). Set `REQUIRE_AUTH=false`
+only for fully-local single-user runs — it makes the API fall back to the
+shared default user.
+
+Landscape *data* remains a single shared library (owned by the default user);
+accounts exist to gate access and grant admin delete, not to partition data.
+
 ## Topic guard (fast fail)
 
 FieldMap maps ML/AI **research** fields. To stop the pipeline being spammed
