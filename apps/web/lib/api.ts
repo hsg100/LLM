@@ -18,6 +18,30 @@ export function apiUrl(path: string, isServer = typeof window === "undefined"): 
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS || 15000);
 
+// Attach the Bearer token (browser only — server components have no session).
+function authHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const t = localStorage.getItem("fm-auth-token");
+    return t ? { Authorization: `Bearer ${t}` } : {};
+  } catch {
+    return {};
+  }
+}
+
+// A 401 means the session is gone/expired. Clear it and let AuthGate re-render
+// the login screen on the next paint.
+function handleUnauthorized() {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem("fm-auth-token");
+    localStorage.removeItem("fm-auth-user");
+    window.dispatchEvent(new Event("fm:auth-changed"));
+  } catch {
+    /* noop */
+  }
+}
+
 function timeoutSignal(init?: RequestInit, timeoutMs = DEFAULT_TIMEOUT_MS) {
   if (init?.signal) return { signal: init.signal, cleanup: () => {} };
   const controller = new AbortController();
@@ -45,7 +69,12 @@ export async function apiGet<T>(path: string, init?: RequestInit, timeoutMs?: nu
   let r: Response;
   const timeout = timeoutSignal(init, timeoutMs);
   try {
-    r = await fetch(apiUrl(path), { cache: "no-store", ...init, signal: timeout.signal });
+    r = await fetch(apiUrl(path), {
+      cache: "no-store",
+      ...init,
+      headers: { ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
+      signal: timeout.signal,
+    });
   } catch (e: any) {
     if (e?.name === "AbortError") {
       throw new Error(`GET ${path} → timed out after ${timeoutMs || DEFAULT_TIMEOUT_MS}ms`);
@@ -55,6 +84,7 @@ export async function apiGet<T>(path: string, init?: RequestInit, timeoutMs?: nu
     timeout.cleanup();
   }
   if (!r.ok) {
+    if (r.status === 401) handleUnauthorized();
     const body = await readErrorBody(r);
     throw new Error(`GET ${path} → ${r.status}${body ? ` — ${body}` : ""}`);
   }
@@ -67,10 +97,10 @@ export async function apiPost<T>(path: string, body: any, init?: RequestInit, ti
   try {
     r = await fetch(apiUrl(path), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
       cache: "no-store",
       ...init,
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
+      body: JSON.stringify(body),
       signal: timeout.signal,
     });
   } catch (e: any) {
@@ -82,8 +112,36 @@ export async function apiPost<T>(path: string, body: any, init?: RequestInit, ti
     timeout.cleanup();
   }
   if (!r.ok) {
+    if (r.status === 401) handleUnauthorized();
     const errBody = await readErrorBody(r);
     throw new Error(`POST ${path} → ${r.status}${errBody ? ` — ${errBody}` : ""}`);
+  }
+  return r.json() as Promise<T>;
+}
+
+export async function apiDelete<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
+  let r: Response;
+  const timeout = timeoutSignal(init, timeoutMs);
+  try {
+    r = await fetch(apiUrl(path), {
+      method: "DELETE",
+      cache: "no-store",
+      ...init,
+      headers: { ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
+      signal: timeout.signal,
+    });
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new Error(`DELETE ${path} → timed out after ${timeoutMs || DEFAULT_TIMEOUT_MS}ms`);
+    }
+    throw new Error(`DELETE ${path} → network error: ${e?.message || e}`);
+  } finally {
+    timeout.cleanup();
+  }
+  if (!r.ok) {
+    if (r.status === 401) handleUnauthorized();
+    const errBody = await readErrorBody(r);
+    throw new Error(`DELETE ${path} → ${r.status}${errBody ? ` — ${errBody}` : ""}`);
   }
   return r.json() as Promise<T>;
 }
@@ -94,10 +152,10 @@ export async function apiPatch<T>(path: string, body: any, init?: RequestInit, t
   try {
     r = await fetch(apiUrl(path), {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
       cache: "no-store",
       ...init,
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
+      body: JSON.stringify(body),
       signal: timeout.signal,
     });
   } catch (e: any) {
@@ -109,6 +167,7 @@ export async function apiPatch<T>(path: string, body: any, init?: RequestInit, t
     timeout.cleanup();
   }
   if (!r.ok) {
+    if (r.status === 401) handleUnauthorized();
     const errBody = await readErrorBody(r);
     throw new Error(`PATCH ${path} → ${r.status}${errBody ? ` — ${errBody}` : ""}`);
   }
@@ -127,6 +186,7 @@ export async function uploadPaper(
   fd.append("file", file);
   const r = await fetch(apiUrl(`/api/landscapes/${landscapeId}/papers/upload`), {
     method: "POST",
+    headers: { ...authHeaders() },
     body: fd,
     cache: "no-store",
   });
@@ -370,4 +430,20 @@ export type PaperGraph = { nodes: GraphNode[]; edges: GraphEdge[] };
 
 export async function getLandscapeGraph(landscapeId: string): Promise<PaperGraph> {
   return apiGet<PaperGraph>(`/api/landscapes/${landscapeId}/graph`);
+}
+
+// ---------------- Auth ----------------
+export type AuthUser = {
+  id: string;
+  email: string;
+  name: string | null;
+  is_admin: boolean;
+};
+
+export async function login(email: string, password: string): Promise<{ token: string; user: AuthUser }> {
+  return apiPost<{ token: string; user: AuthUser }>("/api/auth/login", { email, password });
+}
+
+export async function deleteLandscape(id: string): Promise<{ deleted: boolean }> {
+  return apiDelete<{ deleted: boolean }>(`/api/landscapes/${id}`);
 }

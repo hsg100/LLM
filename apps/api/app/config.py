@@ -14,6 +14,23 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     anthropic_api_key: str = ""
 
+    # --- Authentication ---------------------------------------------------
+    # HMAC secret used to sign session tokens. MUST be overridden in
+    # production (set AUTH_SECRET). The default is clearly dev-only.
+    auth_secret: str = "dev-insecure-auth-secret-change-me"
+    auth_token_ttl_hours: int = 720  # 30 days
+    # When False, the auth dependency falls back to the default user (used by
+    # tests / fully-local single-user runs). Keep True for any shared deploy.
+    require_auth: bool = True
+    # Seed accounts created at API startup (idempotent). Override the passwords
+    # in production via .env. The admin can delete landscapes.
+    admin_email: str = "admin@fieldmap.local"
+    admin_password: str = "FieldMap-Admin-2026"
+    admin_name: str = "Admin"
+    demo_user_email: str = "demo@fieldmap.local"
+    demo_user_password: str = "FieldMap-Demo-2026"
+    demo_user_name: str = "Demo User"
+
     semantic_scholar_api_key: str = ""
     openalex_email: str = ""
 

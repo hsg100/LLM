@@ -71,7 +71,13 @@ services:
       redis:
         condition: service_healthy
     networks:
+      # backend: reach db + redis. public: outbound internet for the pipeline
+      # (arXiv / Semantic Scholar search, LLM API calls, PDF downloads). Without
+      # public the worker is stranded on the internal-only backend network and
+      # every search returns zero candidates. The worker publishes no ports, so
+      # this is outbound egress only.
       - backend
+      - public
 
   caddy:
     image: caddy:2-alpine

@@ -243,6 +243,64 @@ For topic `RAG evaluation` a user gets:
 - Git-backed Obsidian markdown export (button on landscape page →
   `POST /api/landscapes/{id}/export/obsidian`)
 
+## Authentication
+
+The UI is gated behind a login (`POST /api/auth/login` → signed session token,
+stored client-side and sent as `Authorization: Bearer <token>`). This is the
+primary spam gate: `POST /api/landscapes` and `DELETE /api/landscapes/{id}`
+require a valid token, and the whole web app blocks entry until you sign in.
+
+Two accounts are seeded/updated at API startup from settings (override in
+`.env`):
+
+- **Admin** (`ADMIN_EMAIL` / `ADMIN_PASSWORD`) — can delete landscapes
+  (spam cleanup) via the Delete button on the Landscapes page.
+- **Demo member** (`DEMO_USER_EMAIL` / `DEMO_USER_PASSWORD`) — normal access,
+  cannot delete.
+
+Defaults (development only — change in production):
+
+| Role  | Email                  | Password             |
+|-------|------------------------|----------------------|
+| Admin | `admin@fieldmap.local` | `FieldMap-Admin-2026` |
+| Demo  | `demo@fieldmap.local`  | `FieldMap-Demo-2026`  |
+
+Set `AUTH_SECRET` to a long random string in production (it signs tokens; the
+API warns at startup if left at the insecure default). Set `REQUIRE_AUTH=false`
+only for fully-local single-user runs — it makes the API fall back to the
+shared default user.
+
+Landscape *data* remains a single shared library (owned by the default user);
+accounts exist to gate access and grant admin delete, not to partition data.
+
+## Topic guard (fast fail)
+
+FieldMap maps ML/AI **research** fields. To stop the pipeline being spammed
+with off-topic queries (video games, social-media personalities, sports,
+celebrities) — each of which would otherwise burn a full search + embed +
+parse + LLM run and leave a junk landscape — `POST /api/landscapes` runs a
+cheap deterministic gate (`app/services/topic_guard.py`) **before** creating any
+rows or enqueuing work:
+
+- structural sanity (empty/too-short, no letters, gibberish/symbol spam);
+- an off-topic blocklist (e.g. `gta`, `bonnie blue`, `fortnite`, `taylor swift`)
+  that is skipped when the topic contains genuine research vocabulary, so
+  `reinforcement learning in Minecraft` passes while bare `gta` is rejected.
+
+Rejected topics return `HTTP 422` with a human-readable reason (surfaced inline
+on the `/search` page). No LLM is involved, so the check is effectively free.
+
+To purge off-topic landscapes that predate the guard:
+
+```bash
+# preview (no changes)
+docker compose exec api python -m app.scripts.purge_offtopic_landscapes
+# delete them, cascading jobs/clusters/concepts/quizzes/etc (shared papers kept)
+docker compose exec api python -m app.scripts.purge_offtopic_landscapes --apply
+# force-remove specific topics
+docker compose exec api python -m app.scripts.purge_offtopic_landscapes --topic "gta" --apply
+```
+
 ## Prompt safety
 
 All extraction / synthesis / quiz prompts include explicit instructions
