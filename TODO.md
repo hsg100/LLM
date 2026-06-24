@@ -71,3 +71,45 @@ ordering, must-read bucketing).
 
 **Done when.** A landscape exposes an ordered, prerequisite-aware pathway in the
 UI, with a deterministic fallback when the LLM is unavailable.
+
+## 4. Landscapes page: reduce sideways movement on mobile
+
+**Problem.** The landscapes list page has too much horizontal movement /
+scroll on mobile. Needs small optimisations, not a rebuild.
+
+**Goal.** No unintended horizontal scroll; content fits the viewport on a phone.
+
+**Where.**
+- `apps/web/app/landscapes/page.tsx`.
+
+**Ideas to evaluate.**
+- Find what overflows the viewport (wide rows, fixed widths, non-wrapping text,
+  horizontal padding/margins) and constrain it.
+- Allow long topic/status text to wrap or truncate instead of pushing width.
+- Stack row content vertically on narrow screens; ensure `max-width: 100%` /
+  `overflow-x` is contained.
+
+**Done when.** The landscapes page has no horizontal scroll at a phone viewport
+(≤ 420px) and rows read cleanly.
+
+## 5. PDF reader: fullscreen mode (mobile + desktop)
+
+**Problem.** The in-page PDF reader (the `pdf` tab on the paper page) is cramped;
+there's no way to read a paper fullscreen.
+
+**Goal.** A fullscreen reading mode for the PDF, on both mobile and desktop.
+
+**Where.**
+- `apps/web/app/paper/[id]/page.tsx` — the `pdf` tab renders the local PDF blob
+  (`localPdfUrl` / `pdfPreviewUrl`).
+
+**Ideas to evaluate.**
+- A fullscreen toggle that expands the viewer to the whole viewport (Fullscreen
+  API where available, CSS fixed-overlay fallback for iOS Safari which doesn't
+  support it on arbitrary elements).
+- Keep zoom/scroll working inside fullscreen; provide a clear close affordance
+  and Esc-to-exit on desktop.
+- Preserve the existing blob-URL preview + cleanup logic when toggling.
+
+**Done when.** A user can open the PDF fullscreen on desktop and mobile, read
+and scroll it, and exit back to the paper page cleanly.
