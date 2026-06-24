@@ -72,7 +72,7 @@ export async function apiGet<T>(path: string, init?: RequestInit, timeoutMs?: nu
     r = await fetch(apiUrl(path), {
       cache: "no-store",
       ...init,
-      headers: { ...authHeaders(), ...(init?.headers || {}) },
+      headers: { ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
       signal: timeout.signal,
     });
   } catch (e: any) {
@@ -99,7 +99,7 @@ export async function apiPost<T>(path: string, body: any, init?: RequestInit, ti
       method: "POST",
       cache: "no-store",
       ...init,
-      headers: { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers || {}) },
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
       body: JSON.stringify(body),
       signal: timeout.signal,
     });
@@ -127,7 +127,7 @@ export async function apiDelete<T>(path: string, init?: RequestInit, timeoutMs?:
       method: "DELETE",
       cache: "no-store",
       ...init,
-      headers: { ...authHeaders(), ...(init?.headers || {}) },
+      headers: { ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
       signal: timeout.signal,
     });
   } catch (e: any) {
@@ -154,7 +154,7 @@ export async function apiPatch<T>(path: string, body: any, init?: RequestInit, t
       method: "PATCH",
       cache: "no-store",
       ...init,
-      headers: { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers || {}) },
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
       body: JSON.stringify(body),
       signal: timeout.signal,
     });
