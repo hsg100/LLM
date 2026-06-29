@@ -21,6 +21,20 @@ Done and pushed; tracked here for the record.
 - **Admin landscape deletion** — admin-only `DELETE /api/landscapes/{id}` +
   Delete button on the Landscapes page, for cleaning up spam landscapes.
 
+## Shipped (Sprint 2 — `main`)
+
+- **Relationship map for mobile** — `components/graph/RelationshipGraph.tsx`
+  rewritten to be viewport-aware. A `useElementSize` hook + ResizeObserver
+  measures the graph container; below 480 px the graph collapses to a
+  **cluster roll-up** (one large tappable node per cluster), and tapping a
+  cluster drills into its per-paper subgraph with a `← All clusters`
+  breadcrumb. Pan + pinch-zoom land on all tiers via PointerEvents (no
+  library); Ctrl/Cmd-wheel zooms on desktop; keyboard `+ / − / 0` and
+  toolbar buttons mirror. Per-paper nodes bump to a 12 px floor with 13 px
+  labels below 768 px so titles stay legible. Outer grid adds the existing
+  `fm-mobile-grid-one` helper so the inspector + relationship-list panels
+  stack below the graph instead of being squeezed beside it.
+
 ## Shipped (Sprint 1 — `main`)
 
 - **PDF reader fullscreen** — `apps/web/app/paper/[id]/page.tsx` adds a
@@ -49,26 +63,6 @@ Done and pushed; tracked here for the record.
   the regex, sanitizer behaviour, and absence of `compare` flashcards.
 
 ## Remaining
-
-### 2. Optimise the relationship map on mobile
-
-**Problem.** The paper relationship graph is hard to use on small screens.
-
-**Goal.** A relationship map that is legible and interactive on mobile.
-
-**Where.**
-- `apps/web/components/graph/RelationshipGraph.tsx` — the renderer.
-- `apps/web/app/landscape/[id]/map/page.tsx` — the page wrapper.
-
-**Ideas to evaluate.**
-- Responsive sizing / viewport-aware layout instead of a fixed canvas.
-- Touch gestures: pinch-zoom, pan, tap-to-focus a node and its edges.
-- Reduce density on mobile (collapse to top-N nodes / cluster-level view, with
-  drill-in) so labels don't overlap.
-- Larger touch targets and a legend that doesn't occlude the graph.
-
-**Done when.** The map is usable on a phone viewport (≤ 420px) without
-horizontal scroll or overlapping unreadable labels.
 
 ### 3. Learning pathways — breadth curriculum + depth tracks + exercises
 
