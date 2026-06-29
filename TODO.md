@@ -2,7 +2,28 @@
 
 Backlog of planned work. Keep items concrete and pointed at the code they touch.
 
-## 1. Drop "which paper uses this method" style questions
+## Shipped (PR #4 — branch `claude/spam-topics-fast-fail-bv26pw`)
+
+Done and pushed; tracked here for the record.
+
+- **Spam fast-fail topic guard** — `apps/api/app/services/topic_guard.py`
+  rejects off-topic / spam topics (e.g. "gta", "bonnie blue") before any rows
+  are created or the pipeline is enqueued; wired into `POST /api/landscapes`.
+- **Off-topic landscape cleanup** — `services/landscape_cleanup.py` +
+  `scripts/purge_offtopic_landscapes.py` to find and cascade-delete junk
+  landscapes that predate the guard.
+- **Prod worker internet egress fix** — `docker-compose.prod.yml`: the worker
+  was stranded on the internal-only network, so every arXiv search returned
+  zero candidates; it's now on the `public` network.
+- **Login auth gate** — the UI blocks all entry until login; `POST
+  /api/landscapes` requires a token. Seeded admin + demo accounts
+  (stdlib PBKDF2 + signed tokens; `services/auth.py`, `api/deps.py`).
+- **Admin landscape deletion** — admin-only `DELETE /api/landscapes/{id}` +
+  Delete button on the Landscapes page, for cleaning up spam landscapes.
+
+## Remaining
+
+### 1. Drop "which paper uses this method" style questions
 
 **Problem.** Quiz generation produces paper-attribution MCQs — e.g. *"Which
 paper uses this method / introduced this contribution?"*. These test rote
@@ -26,7 +47,7 @@ source-attribution rather than understanding and feel like trivia.
 **Done when.** New landscapes generate no paper-attribution questions, and a
 test asserts the filter rejects a "Which paper uses ...?" stem.
 
-## 2. Optimise the relationship map on mobile
+### 2. Optimise the relationship map on mobile
 
 **Problem.** The paper relationship graph is hard to use on small screens.
 
@@ -46,7 +67,7 @@ test asserts the filter rejects a "Which paper uses ...?" stem.
 **Done when.** The map is usable on a phone viewport (≤ 420px) without
 horizontal scroll or overlapping unreadable labels.
 
-## 3. Recommended learning pathway based on research
+### 3. Recommended learning pathway based on research
 
 **Problem.** We have a reading plan, but not a guided, ordered learning pathway
 derived from the field's structure (prerequisites, clusters, difficulty).
@@ -72,7 +93,7 @@ ordering, must-read bucketing).
 **Done when.** A landscape exposes an ordered, prerequisite-aware pathway in the
 UI, with a deterministic fallback when the LLM is unavailable.
 
-## 4. Landscapes page: reduce sideways movement on mobile
+### 4. Landscapes page: reduce sideways movement on mobile
 
 **Problem.** The landscapes list page has too much horizontal movement /
 scroll on mobile. Needs small optimisations, not a rebuild.
@@ -92,7 +113,7 @@ scroll on mobile. Needs small optimisations, not a rebuild.
 **Done when.** The landscapes page has no horizontal scroll at a phone viewport
 (≤ 420px) and rows read cleanly.
 
-## 5. PDF reader: fullscreen mode (mobile + desktop)
+### 5. PDF reader: fullscreen mode (mobile + desktop)
 
 **Problem.** The in-page PDF reader (the `pdf` tab on the paper page) is cramped;
 there's no way to read a paper fullscreen.
