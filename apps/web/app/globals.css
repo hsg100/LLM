@@ -218,6 +218,13 @@ a:hover { text-decoration: underline; }
     gap: 14px !important;
   }
 
+  /* Landscapes list rows: when stacked, keep children left-aligned and full
+     width instead of inheriting the desktop `align-items: center` which would
+     center the wrapped action chips. */
+  .fm-landscapes-row {
+    align-items: stretch !important;
+  }
+
   .fm-mobile-grid-one {
     grid-template-columns: 1fr !important;
   }

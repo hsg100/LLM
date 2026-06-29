@@ -120,6 +120,7 @@ export default async function LandscapesList() {
           {rows.map((r) => (
             <div
               key={r.id}
+              className="fm-mobile-stack fm-landscapes-row"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -128,37 +129,69 @@ export default async function LandscapesList() {
                 borderBottom: "1px solid var(--bd2)",
               }}
             >
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  background: STATUS_COLOR[r.status] ?? "var(--t4)",
-                }}
-              />
-              <Link
-                href={`/landscape/${r.id}`}
-                style={{
-                  all: "unset",
-                  cursor: "pointer",
-                  flex: 1,
-                  minWidth: 0,
-                }}
-              >
-                <div style={{ fontSize: 13.5, fontWeight: 500 }}>{r.topic}</div>
-                <div
-                  className="font-mono"
-                  style={{ fontSize: 11, color: "var(--t4)", marginTop: 2 }}
-                >
-                  {r.status} · created {new Date(r.created_at).toLocaleDateString()}
-                </div>
-              </Link>
               <div
                 style={{
                   display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  flex: 1,
+                  minWidth: 0,
+                  width: "100%",
+                }}
+              >
+                <span
+                  style={{
+                    flex: "none",
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: STATUS_COLOR[r.status] ?? "var(--t4)",
+                  }}
+                />
+                <Link
+                  href={`/landscape/${r.id}`}
+                  style={{
+                    all: "unset",
+                    cursor: "pointer",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 13.5,
+                      fontWeight: 500,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {r.topic}
+                  </div>
+                  <div
+                    className="font-mono"
+                    style={{
+                      fontSize: 11,
+                      color: "var(--t4)",
+                      marginTop: 2,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {r.status} · created {new Date(r.created_at).toLocaleDateString()}
+                  </div>
+                </Link>
+              </div>
+              <div
+                className="fm-mobile-wrap"
+                style={{
+                  display: "flex",
                   gap: 6,
+                  rowGap: 6,
                   fontSize: 11.5,
                   color: "var(--t3)",
+                  flexShrink: 0,
                 }}
               >
                 <SmallLink href={`/landscape/${r.id}/papers`}>Papers</SmallLink>

@@ -23,6 +23,12 @@ Done and pushed; tracked here for the record.
 
 ## Shipped (Sprint 1 — `main`)
 
+- **Landscapes page mobile fit** — `apps/web/app/landscapes/page.tsx`
+  reworks each row so [status dot + topic/meta] form one row that
+  ellipsizes long titles, and the action chips (Papers/Map/Quiz/Cards/
+  Delete) drop onto a second line below 768 px via the new
+  `fm-landscapes-row` + existing `fm-mobile-stack` / `fm-mobile-wrap`
+  helpers. Eliminates horizontal scroll at 360–420 px viewports.
 - **Drop paper-attribution quiz questions** — `prompts/quiz.md` rewritten
   to ban "Which paper…" stems and drop the `compare` flashcard kind;
   `services/quiz_generation.py` adds `is_paper_attribution_stem` +
@@ -238,26 +244,6 @@ each maps to a Bloom level so a stage covers recall → application):
 - P3: at least 3 new exercise types are playable, ride the FSRS review loop, and
   a stage cannot be cleared without demonstrated mastery (checkpoint + no item
   left in "again").
-
-### 4. Landscapes page: reduce sideways movement on mobile
-
-**Problem.** The landscapes list page has too much horizontal movement /
-scroll on mobile. Needs small optimisations, not a rebuild.
-
-**Goal.** No unintended horizontal scroll; content fits the viewport on a phone.
-
-**Where.**
-- `apps/web/app/landscapes/page.tsx`.
-
-**Ideas to evaluate.**
-- Find what overflows the viewport (wide rows, fixed widths, non-wrapping text,
-  horizontal padding/margins) and constrain it.
-- Allow long topic/status text to wrap or truncate instead of pushing width.
-- Stack row content vertically on narrow screens; ensure `max-width: 100%` /
-  `overflow-x` is contained.
-
-**Done when.** The landscapes page has no horizontal scroll at a phone viewport
-(≤ 420px) and rows read cleanly.
 
 ### 5. PDF reader: fullscreen mode (mobile + desktop)
 
