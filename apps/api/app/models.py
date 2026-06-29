@@ -51,6 +51,10 @@ class User(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
     email: str = Field(sa_column=Column(String, unique=True, index=True))
     name: Optional[str] = None
+    # Auth: PBKDF2 hash (see app.services.auth). Nullable so the legacy default
+    # single-user row (which never logs in) can exist without a password.
+    password_hash: Optional[str] = Field(default=None, sa_column=Column(Text))
+    is_admin: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
     created_at: datetime = Field(default_factory=_now)
 
 

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
 import { useTheme } from "../../app/providers";
 import { apiGet, Landscape } from "../../lib/api";
+import { UserMenu } from "../auth/UserMenu";
 
 /**
  * Topbar shows a breadcrumb derived from the current route plus the
@@ -223,6 +224,8 @@ export function Topbar() {
           </svg>
         </Link>
       )}
+
+      <UserMenu />
     </header>
   );
 }

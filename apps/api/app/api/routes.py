@@ -20,6 +20,7 @@ from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import run_in_threadpool
 
+from app.api.deps import get_current_user, require_admin
 from app.config import get_settings
 from app.db import get_session, session_scope
 from app.pipeline import JobStage, LandscapeStatus, TERMINAL_STAGES
@@ -43,6 +44,7 @@ from app.models import (
     PaperSection,
     Quiz,
     SearchJob,
+    User,
 )
 from app.schemas import (
     AnnotateRequest,
@@ -63,8 +65,11 @@ from app.schemas import (
     LandscapeCreate,
     LandscapeOut,
     LandscapePaperOut,
+    LoginRequest,
+    LoginResponse,
     PaperOut,
     QuizOut,
+    UserOut,
     ReviewQueueOut,
     ReviewResultOut,
     ReviewSubmitIn,
@@ -87,6 +92,9 @@ from app.services.review import (
     get_weak_areas,
     submit_review,
 )
+from app.services.auth import create_token, verify_password
+from app.services.landscape_cleanup import delete_landscape_cascade
+from app.services.topic_guard import evaluate_topic
 from app.services.uploads import ingest_uploaded_pdf, looks_like_pdf
 from app.users import DEFAULT_USER_ID
 from app.workers.landscape_job import job_channel, run_landscape_job
@@ -97,12 +105,43 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+@router.post("/auth/login", response_model=LoginResponse)
+def login(body: LoginRequest, s: Session = Depends(get_session)) -> LoginResponse:
+    email = body.email.strip().lower()
+    user = s.exec(select(User).where(User.email == email)).first()
+    # Verify even when the user is missing to avoid leaking which emails exist.
+    if user is None or not verify_password(body.password, user.password_hash):
+        raise HTTPException(401, "invalid email or password")
+    return LoginResponse(
+        token=create_token(user.id),
+        user=UserOut(id=user.id, email=user.email, name=user.name, is_admin=user.is_admin),
+    )
+
+
+@router.get("/auth/me", response_model=UserOut)
+def me(user: User = Depends(get_current_user)) -> UserOut:
+    return UserOut(id=user.id, email=user.email, name=user.name, is_admin=user.is_admin)
+
+
+# ---------------------------------------------------------------------------
 # Landscapes
 # ---------------------------------------------------------------------------
 @router.post("/landscapes", response_model=dict)
-def create_landscape(body: LandscapeCreate, s: Session = Depends(get_session)) -> dict[str, str]:
+def create_landscape(
+    body: LandscapeCreate,
+    s: Session = Depends(get_session),
+    _user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    # Auth (above) is the spam gate; the guard rejects off-topic / spam topics
+    # before creating any rows or enqueuing the (expensive) pipeline.
+    verdict = evaluate_topic(body.topic)
+    if not verdict.ok:
+        raise HTTPException(422, verdict.reason)
+
     landscape = Landscape(
-        topic=body.topic,
+        topic=verdict.normalized,
         user_id=DEFAULT_USER_ID,
         settings={
             "max_papers": body.max_papers or effective_settings().max_papers_per_landscape,
@@ -143,6 +182,23 @@ def get_landscape(landscape_id: str, s: Session = Depends(get_session)) -> Lands
     if row is None:
         raise HTTPException(404, "landscape not found")
     return LandscapeOut.model_validate(row, from_attributes=True)
+
+
+@router.delete("/landscapes/{landscape_id}", response_model=dict)
+def delete_landscape(
+    landscape_id: str,
+    s: Session = Depends(get_session),
+    _admin: User = Depends(require_admin),
+) -> dict[str, object]:
+    """Admin-only: delete a landscape and all of its dependent rows.
+
+    Used to clean up spam / old landscapes. Shared ``papers`` are kept.
+    """
+    row = s.get(Landscape, landscape_id)
+    if row is None:
+        raise HTTPException(404, "landscape not found")
+    deleted = delete_landscape_cascade(s, landscape_id)
+    return {"deleted": True, "landscape_id": landscape_id, "rows": deleted}
 
 
 def _papers_by_id(s: Session, paper_ids: list[str]) -> dict[str, Paper]:

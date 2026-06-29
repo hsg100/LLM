@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { ReactNode } from "react";
 import { Providers } from "./providers";
 import { AppShell } from "../components/shell/AppShell";
+import { AuthGate } from "../components/auth/AuthGate";
 
 export const metadata: Metadata = {
   title: "FieldMap — research OS",
@@ -22,7 +23,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body>
         <Providers>
-          <AppShell>{children}</AppShell>
+          <AuthGate>
+            <AppShell>{children}</AppShell>
+          </AuthGate>
         </Providers>
       </body>
     </html>
