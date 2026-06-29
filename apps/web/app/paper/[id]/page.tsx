@@ -19,6 +19,8 @@ export default function PaperPage({ params }: { params: { id: string } }) {
   const [pdfPreviewLoading, setPdfPreviewLoading] = useState(false);
   const [pdfPreviewErr, setPdfPreviewErr] = useState<string | null>(null);
   const pdfPreviewUrlRef = useRef<string | null>(null);
+  const [pdfFullscreen, setPdfFullscreen] = useState(false);
+  const pdfPanelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     apiGet<PaperDetail>(`/api/papers/${params.id}`)
@@ -96,6 +98,63 @@ export default function PaperPage({ params }: { params: { id: string } }) {
       pdfPreviewUrlRef.current = null;
     };
   }, []);
+
+  // Sync our pdfFullscreen flag with the browser's Fullscreen API state and
+  // wire Esc-to-exit. The browser fires `fullscreenchange` whenever the user
+  // exits via chrome (e.g. Esc handled natively, or the browser's own UI), so
+  // we mirror that into local state. We also handle Esc ourselves for the
+  // CSS-overlay path (iOS Safari, where requestFullscreen on a div is a no-op).
+  useEffect(() => {
+    if (!pdfFullscreen) return;
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => setPdfFullscreen(false));
+      } else {
+        setPdfFullscreen(false);
+      }
+    };
+    const onFsChange = () => {
+      if (!document.fullscreenElement) setPdfFullscreen(false);
+    };
+
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("fullscreenchange", onFsChange);
+    };
+  }, [pdfFullscreen]);
+
+  // Leave fullscreen if the user navigates away from the pdf tab.
+  useEffect(() => {
+    if (tab === "pdf") return;
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    }
+    setPdfFullscreen(false);
+  }, [tab]);
+
+  const togglePdfFullscreen = () => {
+    if (pdfFullscreen) {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => setPdfFullscreen(false));
+      } else {
+        setPdfFullscreen(false);
+      }
+      return;
+    }
+    const el = pdfPanelRef.current;
+    if (el && typeof el.requestFullscreen === "function") {
+      el.requestFullscreen()
+        .then(() => setPdfFullscreen(true))
+        .catch(() => setPdfFullscreen(true));
+    } else {
+      // iOS Safari and similar: fall back to a CSS fixed-overlay.
+      setPdfFullscreen(true);
+    }
+  };
 
   if (err) {
     return (
@@ -477,12 +536,24 @@ export default function PaperPage({ params }: { params: { id: string } }) {
 
       {tab === "pdf" && (
         <div
+          ref={pdfPanelRef}
           style={{
             border: "1px solid var(--bd)",
-            borderRadius: 14,
+            borderRadius: pdfFullscreen ? 0 : 14,
             background: "var(--panel)",
             overflow: "hidden",
-            boxShadow: "var(--shadow)",
+            boxShadow: pdfFullscreen ? "none" : "var(--shadow)",
+            ...(pdfFullscreen
+              ? {
+                  position: "fixed" as const,
+                  inset: 0,
+                  zIndex: 9999,
+                  width: "100vw",
+                  height: "100vh",
+                  display: "flex",
+                  flexDirection: "column" as const,
+                }
+              : {}),
           }}
         >
           <div
@@ -494,6 +565,7 @@ export default function PaperPage({ params }: { params: { id: string } }) {
               padding: "11px 16px",
               borderBottom: "1px solid var(--bd)",
               background: "var(--raised)",
+              flex: "none",
             }}
           >
             <span
@@ -581,9 +653,64 @@ export default function PaperPage({ params }: { params: { id: string } }) {
                 Open on arXiv
               </a>
             )}
+            {localPdfUrl && (
+              <button
+                type="button"
+                onClick={togglePdfFullscreen}
+                aria-label={pdfFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                title={pdfFullscreen ? "Exit fullscreen (Esc)" : "Fullscreen"}
+                style={{
+                  all: "unset",
+                  cursor: "pointer",
+                  fontSize: 11.5,
+                  color: "var(--t2)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 5,
+                  padding: "5px 10px",
+                  borderRadius: 7,
+                  border: "1px solid var(--bd)",
+                  background: "var(--raised)",
+                }}
+              >
+                {pdfFullscreen ? (
+                  <>
+                    <svg width="12" height="12" viewBox="0 0 15 15" fill="none">
+                      <path
+                        d="M5.5 1.5v4h-4M9.5 1.5v4h4M5.5 13.5v-4h-4M9.5 13.5v-4h4"
+                        stroke="currentColor"
+                        strokeWidth="1.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span className="fm-mobile-hide">Exit fullscreen</span>
+                  </>
+                ) : (
+                  <>
+                    <svg width="12" height="12" viewBox="0 0 15 15" fill="none">
+                      <path
+                        d="M1.5 5.5v-4h4M13.5 5.5v-4h-4M1.5 9.5v4h4M13.5 9.5v4h-4"
+                        stroke="currentColor"
+                        strokeWidth="1.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span className="fm-mobile-hide">Fullscreen</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
 
-          <div style={{ padding: 16 }}>
+          <div
+            style={{
+              padding: pdfFullscreen ? 0 : 16,
+              flex: pdfFullscreen ? 1 : "none",
+              minHeight: 0,
+            }}
+          >
             {localPdfUrl ? (
               pdfPreviewErr ? (
                 <div
@@ -604,9 +731,10 @@ export default function PaperPage({ params }: { params: { id: string } }) {
                   className="fm-pdf-preview"
                   style={{
                     width: "100%",
-                    height: "72vh",
-                    border: "1px solid var(--bd)",
-                    borderRadius: 8,
+                    height: pdfFullscreen ? "100%" : "72vh",
+                    border: pdfFullscreen ? "none" : "1px solid var(--bd)",
+                    borderRadius: pdfFullscreen ? 0 : 8,
+                    display: "block",
                   }}
                   title="PDF preview"
                 />
@@ -618,9 +746,9 @@ export default function PaperPage({ params }: { params: { id: string } }) {
                     alignItems: "center",
                     justifyContent: "center",
                     width: "100%",
-                    height: "72vh",
-                    border: "1px solid var(--bd)",
-                    borderRadius: 8,
+                    height: pdfFullscreen ? "100%" : "72vh",
+                    border: pdfFullscreen ? "none" : "1px solid var(--bd)",
+                    borderRadius: pdfFullscreen ? 0 : 8,
                     background: "var(--raised)",
                     color: "var(--t3)",
                     fontSize: 13,
@@ -662,7 +790,7 @@ export default function PaperPage({ params }: { params: { id: string } }) {
             )}
           </div>
 
-          {data.sections.length > 0 && (
+          {data.sections.length > 0 && !pdfFullscreen && (
             <div
               style={{
                 display: "flex",

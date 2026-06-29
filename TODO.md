@@ -23,6 +23,15 @@ Done and pushed; tracked here for the record.
 
 ## Shipped (Sprint 1 — `main`)
 
+- **PDF reader fullscreen** — `apps/web/app/paper/[id]/page.tsx` adds a
+  Fullscreen toggle button to the PDF-tab toolbar. Uses the Fullscreen
+  API (`element.requestFullscreen` / `document.exitFullscreen`) where
+  available; falls back to a CSS `position: fixed; inset: 0; z-index:
+  9999` overlay for iOS Safari. Listens for `fullscreenchange` to sync
+  state when the user exits via the browser chrome, and handles Esc for
+  the overlay path. Exits cleanly on PDF-tab leave. Preserves the
+  existing blob-URL preview lifecycle (`pdfPreviewUrl` ref-tracked
+  revoke on unmount, tab switch, URL change).
 - **Landscapes page mobile fit** — `apps/web/app/landscapes/page.tsx`
   reworks each row so [status dot + topic/meta] form one row that
   ellipsizes long titles, and the action chips (Papers/Map/Quiz/Cards/
@@ -245,24 +254,3 @@ each maps to a Bloom level so a stage covers recall → application):
   a stage cannot be cleared without demonstrated mastery (checkpoint + no item
   left in "again").
 
-### 5. PDF reader: fullscreen mode (mobile + desktop)
-
-**Problem.** The in-page PDF reader (the `pdf` tab on the paper page) is cramped;
-there's no way to read a paper fullscreen.
-
-**Goal.** A fullscreen reading mode for the PDF, on both mobile and desktop.
-
-**Where.**
-- `apps/web/app/paper/[id]/page.tsx` — the `pdf` tab renders the local PDF blob
-  (`localPdfUrl` / `pdfPreviewUrl`).
-
-**Ideas to evaluate.**
-- A fullscreen toggle that expands the viewer to the whole viewport (Fullscreen
-  API where available, CSS fixed-overlay fallback for iOS Safari which doesn't
-  support it on arbitrary elements).
-- Keep zoom/scroll working inside fullscreen; provide a clear close affordance
-  and Esc-to-exit on desktop.
-- Preserve the existing blob-URL preview + cleanup logic when toggling.
-
-**Done when.** A user can open the PDF fullscreen on desktop and mobile, read
-and scroll it, and exit back to the paper page cleanly.
