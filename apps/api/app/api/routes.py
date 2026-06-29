@@ -86,6 +86,7 @@ from app.services.export_service import (
     write_landscape_export,
 )
 from app.services.pdf_storage import resolve_pdf_storage_path
+from app.services.quiz_generation import is_paper_attribution_stem
 from app.services.review import (
     ReviewError,
     get_queue as get_review_queue,
@@ -750,12 +751,17 @@ async def job_events(job_id: str) -> EventSourceResponse:
 @router.get("/landscapes/{landscape_id}/quiz", response_model=list[QuizOut])
 def get_quiz(landscape_id: str, s: Session = Depends(get_session)) -> list[QuizOut]:
     rows = s.exec(select(Quiz).where(Quiz.landscape_id == landscape_id)).all()
+    # Backfill filter: existing landscapes may have persisted paper-attribution
+    # MCQs from earlier pipeline runs. Drop them on read so the UI is consistent
+    # with the current prompt + sanitizer policy without rerunning the pipeline.
+    rows = [r for r in rows if not is_paper_attribution_stem(r.question or "")]
     return [QuizOut.model_validate(r, from_attributes=True) for r in rows]
 
 
 @router.get("/landscapes/{landscape_id}/flashcards", response_model=list[FlashcardOut])
 def get_flashcards(landscape_id: str, s: Session = Depends(get_session)) -> list[FlashcardOut]:
     rows = s.exec(select(Flashcard).where(Flashcard.landscape_id == landscape_id)).all()
+    rows = [r for r in rows if (r.kind or "recall").lower() != "compare"]
     return [FlashcardOut.model_validate(r, from_attributes=True) for r in rows]
 
 

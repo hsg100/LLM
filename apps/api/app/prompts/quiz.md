@@ -9,15 +9,17 @@ Topic: **{{topic}}**
 
 ## Task
 Generate active-recall study material:
-- 10–20 **MCQs** that test understanding (not trivia like author names).
-  Each question must have 4 options, exactly one correct answer, and a brief
-  explanation grounded in the source notes. Include some **paper-comparison**
-  questions (which paper a given method/contribution/limitation belongs to).
+- 10–20 **MCQs** that test **understanding**, not trivia like author names
+  or source attribution. Each question must have 4 options, exactly one
+  correct answer, and a brief explanation grounded in the source notes.
+  Do not write paper-attribution stems (e.g. "Which paper uses…",
+  "Which of these papers…", "What paper introduced…"). Quiz the *idea*,
+  not which paper it came from.
 - 10–20 **flashcards**, atomic (one concept each). Mix the kinds:
   - `recall` — "what / why / how" prompts.
   - `explain` — **explain-before-reveal**: ask the learner to reconstruct an
     idea in their own words; the `back` is the grounded answer to check against.
-  - `compare` — contrast two papers (how does A differ from B?).
+  - `cloze` — fill-in-the-blank for a key term or value.
 
 Distractors should be plausible but clearly wrong on close reading.
 
@@ -41,7 +43,7 @@ Distractors should be plausible but clearly wrong on close reading.
       "back": "string",
       "paper_id": "string|null",
       "concept": "string",
-      "kind": "recall|explain|cloze|compare"
+      "kind": "recall|explain|cloze"
     }
   ]
 }

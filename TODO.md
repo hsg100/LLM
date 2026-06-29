@@ -21,31 +21,19 @@ Done and pushed; tracked here for the record.
 - **Admin landscape deletion** — admin-only `DELETE /api/landscapes/{id}` +
   Delete button on the Landscapes page, for cleaning up spam landscapes.
 
+## Shipped (Sprint 1 — `main`)
+
+- **Drop paper-attribution quiz questions** — `prompts/quiz.md` rewritten
+  to ban "Which paper…" stems and drop the `compare` flashcard kind;
+  `services/quiz_generation.py` adds `is_paper_attribution_stem` +
+  module-level regex applied in `_sanitize_quizzes` and
+  `_sanitize_flashcards`; three deterministic-fallback attribution MCQ
+  blocks deleted and replaced with a concept-grounded method↔problem
+  MCQ. `GET /api/landscapes/{id}/quiz` and `/flashcards` now filter
+  existing rows on read so back-fill is automatic. New unit tests cover
+  the regex, sanitizer behaviour, and absence of `compare` flashcards.
+
 ## Remaining
-
-### 1. Drop "which paper uses this method" style questions
-
-**Problem.** Quiz generation produces paper-attribution MCQs — e.g. *"Which
-paper uses this method / introduced this contribution?"*. These test rote
-source-attribution rather than understanding and feel like trivia.
-
-**Goal.** Stop generating them; keep concept-understanding MCQs and flashcards.
-
-**Where.**
-- `apps/api/app/prompts/quiz.md` — remove the instruction to *"Include some
-  **paper-comparison** questions (which paper a given method/contribution/
-  limitation belongs to)"*, and reconsider the `compare` flashcard kind
-  ("contrast two papers") if it produces the same attribution feel.
-- `apps/api/app/services/quiz_generation.py` — add a sanitization filter so any
-  generated item that is paper-attribution shaped is dropped even if the model
-  emits one anyway (e.g. drop MCQs whose stem matches "which paper" /
-  "what paper" / "which of these papers"). Belt-and-braces with the prompt
-  change.
-- Backfill: existing landscapes already have these quizzes persisted — decide
-  whether to regenerate or filter on read (`GET /api/landscapes/{id}/quiz`).
-
-**Done when.** New landscapes generate no paper-attribution questions, and a
-test asserts the filter rejects a "Which paper uses ...?" stem.
 
 ### 2. Optimise the relationship map on mobile
 

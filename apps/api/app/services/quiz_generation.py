@@ -3,11 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any, Optional
 
 from app.services.llm import LLMProvider
 from app.services.prompts import render
 from app.services.synthesis import build_papers_json
+
+# Reject MCQs whose stem asks the learner to attribute a method/contribution
+# /limitation to a specific paper. Tests rote source-attribution rather than
+# understanding.
+_PAPER_ATTRIBUTION_RE = re.compile(
+    r"\b(which|what)\s+(?:of\s+(?:these|the|the\s+following)\s+)?papers?\b",
+    re.IGNORECASE,
+)
+
+
+def is_paper_attribution_stem(stem: str) -> bool:
+    return bool(_PAPER_ATTRIBUTION_RE.search(stem or ""))
 
 
 async def generate_quizzes_and_flashcards(
@@ -52,6 +65,8 @@ def _sanitize_quizzes(items: list[Any]) -> list[dict[str, Any]]:
         options = [str(o).strip() for o in (it.get("options") or []) if str(o).strip()]
         if not question or len(options) < 2:
             continue
+        if is_paper_attribution_stem(question):
+            continue
         try:
             correct = int(it.get("correct_index", 0))
         except Exception:  # noqa: BLE001
@@ -81,7 +96,10 @@ def _sanitize_flashcards(items: list[Any]) -> list[dict[str, Any]]:
         if not front or not back:
             continue
         kind = (it.get("kind") or "recall").strip().lower()
-        if kind not in {"recall", "explain", "cloze", "compare"}:
+        if kind == "compare":
+            # Paper-comparison cards test source attribution, not understanding.
+            continue
+        if kind not in {"recall", "explain", "cloze"}:
             kind = "recall"
         out.append(
             {
@@ -116,7 +134,6 @@ def _fallback_quizzes_and_flashcards(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     quizzes: list[dict[str, Any]] = []
     flashcards: list[dict[str, Any]] = []
-    titles = [str(p.get("title") or "Untitled paper") for p in landscape_papers]
 
     for p in landscape_papers:
         ext = p.get("extraction") or {}
@@ -185,54 +202,33 @@ def _fallback_quizzes_and_flashcards(
                 }
             )
 
-        if method and len(titles) >= 2:
-            distractors = [x for x in titles if x != title][:3]
-            options = [title, *distractors]
-            quizzes.append(
-                {
-                    "question": f"Which paper uses this method: {method[:220]}",
-                    "options": options,
-                    "correct_index": 0,
-                    "explanation": f"The method summary comes from '{title}'.",
-                    "paper_id": paper_id,
-                    "concept": "method attribution",
-                    "difficulty": _clamp_int(ext.get("difficulty_level"), 1, 5, 2),
-                }
-            )
-        if limitations and len(titles) >= 2:
-            distractors = [x for x in titles if x != title][:3]
-            options = [title, *distractors]
-            quizzes.append(
-                {
-                    "question": f"Which paper reports this limitation: {limitations[0][:220]}",
-                    "options": options,
-                    "correct_index": 0,
-                    "explanation": f"The limitation is grounded in the extraction for '{title}'.",
-                    "paper_id": paper_id,
-                    "concept": "limitation attribution",
-                    "difficulty": _clamp_int(ext.get("difficulty_level"), 1, 5, 2),
-                }
-            )
-
-        # Paper-comparison: distinguish papers by their core contribution.
-        contribution = _clean_answer(ext.get("contribution"))
-        if contribution and len(titles) >= 2:
-            distractors = [x for x in titles if x != title][:3]
-            options = [title, *distractors]
-            quizzes.append(
-                {
-                    "question": (
-                        "Compared with the other papers, which one's main "
-                        f"contribution is: {contribution[:200]}"
-                    ),
-                    "options": options,
-                    "correct_index": 0,
-                    "explanation": f"This contribution is what sets '{title}' apart.",
-                    "paper_id": paper_id,
-                    "concept": "contribution comparison",
-                    "difficulty": _clamp_int(ext.get("difficulty_level"), 1, 5, 3),
-                }
-            )
+        # Concept-grounded MCQ: ask about the method itself, not which paper.
+        if method and problem:
+            other_problems = [
+                _clean_answer((q.get("extraction") or {}).get("problem"))
+                for q in landscape_papers
+                if q is not p
+            ]
+            distractors = [x for x in other_problems if x and x != problem][:3]
+            if len(distractors) >= 2:
+                options = [problem, *distractors[:3]]
+                quizzes.append(
+                    {
+                        "question": (
+                            f"What problem does the method '{method[:160]}' "
+                            "primarily address?"
+                        ),
+                        "options": options,
+                        "correct_index": 0,
+                        "explanation": (
+                            f"From the extraction for '{title}': "
+                            f"the method targets '{problem[:160]}'."
+                        ),
+                        "paper_id": paper_id,
+                        "concept": "method ↔ problem",
+                        "difficulty": _clamp_int(ext.get("difficulty_level"), 1, 5, 2),
+                    }
+                )
 
     return quizzes[:12], flashcards[:16]
 
