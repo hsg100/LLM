@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.routes import router
 from app.config import get_settings
@@ -69,6 +71,44 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Starlette's CORSMiddleware only decorates responses that flow back through it.
+# An unhandled exception is caught by the *outermost* ServerErrorMiddleware, so
+# the resulting 500 skips CORS entirely and reaches the browser with no
+# Access-Control-Allow-Origin header. The browser then can't read the response
+# and surfaces the generic "Failed to fetch" — masking the real server error as
+# a phantom network failure (this is exactly what hid a schema-drift 500 on the
+# login endpoint). Re-attach the CORS headers here so a 500 shows up as a real,
+# readable error client-side. Handled 4xx (HTTPException / 422) already pass
+# through CORSMiddleware normally and are unaffected.
+_cors_origin_regex = (
+    re.compile(settings.cors_allowed_origin_regex) if settings.cors_allowed_origin_regex else None
+)
+
+
+def _cors_headers_for(origin: str | None) -> dict[str, str]:
+    if not origin:
+        return {}
+    matches = origin in allowed_origins or (
+        _cors_origin_regex is not None and _cors_origin_regex.fullmatch(origin) is not None
+    )
+    if not matches:
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin",
+    }
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "internal server error"},
+        headers=_cors_headers_for(request.headers.get("origin")),
+    )
 
 
 @app.get("/health")
