@@ -47,7 +47,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         with session_scope() as session:
             ensure_default_user(session)
             ensure_seed_users(session)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 — keep API up so /health + /ready work for debugging
+        # Record the failure so /ready reports it (503) instead of the API
+        # silently serving a broken schema — the exact failure mode where an
+        # un-stamped/drifted DB let login 500 while /health stayed green.
+        from app.db import set_migration_status
+
+        set_migration_status("error", f"{type(e).__name__}: {str(e)[:200]}")
         logger.error("api startup: init_db failed: %s", e)
     yield
 
@@ -71,6 +77,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Wildcard origins with credentials is a footgun: browsers reject
+# `Access-Control-Allow-Origin: *` on credentialed requests, so every call
+# fails with an opaque "Failed to fetch" while the server looks healthy. We
+# always send credentials (Bearer flows), so a "*" here breaks all cross-origin
+# calls. Warn loudly at startup rather than fail (deploys shouldn't crash at
+# 2am), mirroring the AUTH_SECRET default warning.
+if "*" in allowed_origins:
+    logger.error(
+        "SECURITY/CORS: CORS_ALLOWED_ORIGINS contains '*' with allow_credentials=True. "
+        "Browsers reject wildcard CORS on credentialed requests, so all cross-origin "
+        "calls will fail. List explicit origins or set CORS_ALLOWED_ORIGIN_REGEX instead."
+    )
 
 # Starlette's CORSMiddleware only decorates responses that flow back through it.
 # An unhandled exception is caught by the *outermost* ServerErrorMiddleware, so
@@ -118,10 +137,13 @@ def health() -> dict[str, str]:
 
 @app.get("/ready")
 def ready(response: Response) -> dict[str, object]:
-    """Deeper readiness check: DB + Redis + settings snapshot.
+    """Deeper readiness check: DB + Redis + schema + settings snapshot.
 
-    Returns HTTP 503 when a hard dependency (DB or Redis) is unavailable, so
-    this can be used directly as a deployment readiness probe.
+    Returns HTTP 503 when a hard dependency (DB or Redis) is unavailable, or
+    when the DB schema has drifted from the migration head (e.g. an un-stamped
+    or partially-migrated DB), so this can be used directly as a deployment
+    readiness probe. Schema drift previously stayed invisible here while login
+    returned 500 — this makes the probe fail loudly instead.
     """
     s = get_settings()
     out: dict[str, object] = {
@@ -152,7 +174,23 @@ def ready(response: Response) -> dict[str, object]:
         out["redis"] = "ok"
     except Exception as e:  # noqa: BLE001
         out["redis"] = f"error: {type(e).__name__}: {str(e)[:160]}"
-    if out.get("db") != "ok" or out.get("redis") != "ok":
+    # Schema: compare the DB's applied Alembic revision to the code's head.
+    # Unequal (or a missing alembic_version table → current is None) means the
+    # live DB has drifted and endpoints may 500 on missing columns/tables.
+    from app.db import alembic_current_and_head, get_migration_status
+
+    startup = get_migration_status()
+    out["migrations_startup"] = startup["status"]
+    if startup["detail"]:
+        out["migrations_detail"] = startup["detail"]
+    try:
+        current, head = alembic_current_and_head()
+        out["schema_rev"] = current
+        out["schema_head"] = head
+        out["migrations"] = "ok" if current == head else "stale"
+    except Exception as e:  # noqa: BLE001
+        out["migrations"] = f"error: {type(e).__name__}: {str(e)[:160]}"
+    if out.get("db") != "ok" or out.get("redis") != "ok" or out.get("migrations") != "ok":
         response.status_code = 503
     return out
 
