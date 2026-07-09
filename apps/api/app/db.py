@@ -61,16 +61,53 @@ def _wait_for_db() -> None:
     raise last_exc
 
 
-def run_migrations() -> None:
-    """Apply Alembic migrations up to head. Owned by the API process."""
-    from alembic import command
+# Startup migration outcome, surfaced by GET /ready so a swallowed migration
+# failure (or schema drift) fails the readiness probe instead of silently
+# serving 500s. See init_db() and app.main.lifespan.
+_migration_status: dict[str, str | None] = {"status": "unknown", "detail": None}
+
+
+def set_migration_status(status: str, detail: str | None = None) -> None:
+    _migration_status["status"] = status
+    _migration_status["detail"] = detail
+
+
+def get_migration_status() -> dict[str, str | None]:
+    return dict(_migration_status)
+
+
+def _alembic_config() -> "Config":  # type: ignore[name-defined] # noqa: F821
     from alembic.config import Config
 
     cfg = Config(str(_API_ROOT / "alembic.ini"))
     # Resolve paths absolutely so this works regardless of CWD (the app may be
     # launched from anywhere). env.py reads the DB URL from settings itself.
     cfg.set_main_option("script_location", str(_API_ROOT / "migrations"))
-    command.upgrade(cfg, "head")
+    return cfg
+
+
+def alembic_current_and_head() -> tuple[str | None, str | None]:
+    """Return (applied revision on the DB, latest revision in code).
+
+    Equal means the schema is current; unequal means the live DB has drifted
+    (e.g. never stamped, or a migration failed to apply). ``current`` is None
+    when the DB has no ``alembic_version`` table at all.
+    """
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(_alembic_config())
+    head = script.get_current_head()
+    with engine.connect() as conn:
+        current = MigrationContext.configure(conn).get_current_revision()
+    return current, head
+
+
+def run_migrations() -> None:
+    """Apply Alembic migrations up to head. Owned by the API process."""
+    from alembic import command
+
+    command.upgrade(_alembic_config(), "head")
 
 
 def init_db() -> None:
@@ -87,6 +124,7 @@ def init_db() -> None:
     _wait_for_db()
     run_migrations()
     _validate_vector_columns()
+    set_migration_status("ok")
     logger.info("init_db: connected, migrated, and schema ready")
 
 

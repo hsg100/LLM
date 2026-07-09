@@ -99,7 +99,7 @@ def test_rating_is_correct_maps_grades():
 # ---------------------------------------------------------------------------
 # Richer question types (pure fallback)
 # ---------------------------------------------------------------------------
-def test_fallback_emits_explain_and_compare_items():
+def test_fallback_emits_explain_flashcards_and_valid_quizzes():
     papers = [
         {
             "paper_id": "p1",
@@ -123,7 +123,9 @@ def test_fallback_emits_explain_and_compare_items():
     ]
     quizzes, flashcards = _fallback_quizzes_and_flashcards(papers)
     assert any(f["kind"] == "explain" for f in flashcards)
-    assert any(q["concept"] == "contribution comparison" for q in quizzes)
+    # The deprecated `compare` flashcard kind was dropped (see quiz_generation);
+    # the fallback must no longer emit it.
+    assert all(f["kind"] != "compare" for f in flashcards)
     # Every quiz still has a valid correct option index.
     for q in quizzes:
         assert 0 <= q["correct_index"] < len(q["options"])
