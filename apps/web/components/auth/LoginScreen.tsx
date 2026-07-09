@@ -32,6 +32,20 @@ export function LoginScreen() {
     }
   }
 
+  // TEMPORARY: skip the login gate while the auth API is unavailable. Sets a
+  // local-only admin session so the full app renders. This does NOT mint a real
+  // API token — server-side endpoints still enforce auth, so data calls may 401
+  // until the API/auth is restored. Remove this handler and the button below
+  // once /api/auth/login works again.
+  function bypassLogin() {
+    signIn("bypass-temp-token", {
+      id: "bypass-user",
+      email: "bypass@fieldmap.local",
+      name: "Bypass (temporary)",
+      is_admin: true,
+    });
+  }
+
   return (
     <div
       style={{
@@ -135,6 +149,32 @@ export function LoginScreen() {
           </button>
         </form>
       </div>
+
+      {/* TEMPORARY bypass — remove once the auth API is restored. */}
+      <button
+        type="button"
+        onClick={bypassLogin}
+        aria-label="Bypass login (temporary)"
+        data-temporary-bypass
+        style={{
+          all: "unset",
+          position: "fixed",
+          left: "50%",
+          bottom: 20,
+          transform: "translateX(-50%)",
+          cursor: "pointer",
+          padding: "9px 16px",
+          borderRadius: 9,
+          border: "1px dashed var(--bd)",
+          background: "var(--panel)",
+          color: "var(--t3)",
+          fontSize: 12.5,
+          fontWeight: 500,
+          whiteSpace: "nowrap",
+        }}
+      >
+        Bypass login (temporary) →
+      </button>
     </div>
   );
 }
