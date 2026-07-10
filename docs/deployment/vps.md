@@ -363,6 +363,7 @@ Update deployment:
 ```bash
 git pull
 make prod-up
+make prod-smoke
 ```
 
 View logs:
@@ -388,6 +389,7 @@ make prod-down
 
 ## Remote Verification Checklist
 
+- Run `make prod-smoke` after `make prod-up` for the fast deploy smoke check.
 - `https://api.yourdomain.com/health` returns `{"status":"ok"}`.
 - `https://api.yourdomain.com/ready` reports `db: ok`, `redis: ok`, and `migrations: ok` (with `schema_rev == schema_head`).
 - `https://api.yourdomain.com/ready/embeddings` returns `ok: true`.
