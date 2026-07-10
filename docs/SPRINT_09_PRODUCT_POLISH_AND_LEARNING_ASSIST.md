@@ -18,29 +18,18 @@ adds the first version of contextual "ask AI" help.
      metadata `icons`) rather than only a manual `<link>`.
    - Acceptance: Chrome tab shows the FieldMap icon locally and in production.
 
-2. **Cluster names still showing as generic "Cluster"**
-   - Audit every path where the frontend receives only `cluster_id` or a missing
-     `cluster_name`.
-   - Backend should expose readable cluster metadata wherever papers are listed
-     or graphed; frontend helpers must never display database UUIDs.
-   - Improve fallback naming when no LLM cluster name exists:
-     - derive a label from top paper key terms, concepts, datasets, benchmarks,
-       or synthesis field-structure nodes;
-     - fallback to `Cluster 1`, `Cluster 2`, etc. only when no semantic signal
-       exists.
-   - Acceptance: no visible cluster label is a UUID or bare "Cluster" unless it
-     is intentionally numbered and unavoidable.
+2. **Cluster names still showing as generic "Cluster"** — ✅ already shipped
+   (commit `2fe7212`, predates this doc). `apps/web/lib/clusters.ts` and
+   `apps/api/app/workers/landscape_job.py` already implement the fallback
+   chain described here; no action needed.
 
-3. **`GET /api/jobs -> 404`**
-   - Treat as a release/deployment contract bug because the current repo has a
-     jobs index endpoint but the observed app reports 404.
-   - Verify the API router includes `GET /api/jobs` in the deployed build, not
-     just locally.
-   - Add a readiness/contract smoke check for `/api/jobs` and `/api/jobs?landscape_id=...`.
-   - Update frontend error handling so a missing jobs endpoint gives a useful
-     recovery message instead of a raw 404 card.
-   - Acceptance: `/jobs` loads against the same API base used by the rest of
-     the app, and `GET /api/jobs` returns a list, even if empty.
+3. **`GET /api/jobs -> 404`** — partially done. The route is registered
+   (`apps/api/app/api/routes.py`) and covered by a contract test
+   (`test_jobs_index.py`), and the frontend already shows a recovery message
+   on fetch failure (`apps/web/app/jobs/page.tsx`) — so the reported 404 is
+   not reproducible at the code level. What's still missing: an automated
+   post-deploy smoke check that exercises the *deployed* API surface (CI only
+   runs `pytest` against a local TestClient); add that if this 404 recurs.
 
 ## Learning Discovery And Trending
 
@@ -120,7 +109,9 @@ Flashcards UI is bugged and unreadable.
   make it feel deliberate and consistent across landscape overview, paper pages,
   reading plan, and synthesis text.
 - Ensure popups contain simple definitions first, then optional deeper context.
-- Add mobile behavior: tap term opens the same concept card/sheet.
+- Mobile tap-to-open behavior — ✅ already shipped (commit `0b2432d`, predates
+  this doc): `ConceptText` opens a full-screen bottom-sheet on tap, separate
+  from the hover-only CSS tooltip.
 
 ### Highlight-to-Ask-AI
 

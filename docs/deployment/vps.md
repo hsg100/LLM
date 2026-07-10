@@ -210,9 +210,15 @@ Expected `/ready` should report:
 {
   "env": "production",
   "db": "ok",
-  "redis": "ok"
+  "redis": "ok",
+  "migrations_startup": "ok",
+  "migrations": "ok",
+  "schema_rev": "<alembic revision>",
+  "schema_head": "<alembic revision>"
 }
 ```
+
+`schema_rev` and `schema_head` must match. If `migrations` is `"stale"` (or `db`/`redis` isn't `"ok"`), `/ready` returns HTTP 503 even though `/health` may still report `{"status":"ok"}` — `/health` does not check schema state, only `/ready` does. Run `make prod-migrate` to bring the schema to head, then re-check.
 
 Also check embeddings:
 
@@ -383,7 +389,7 @@ make prod-down
 ## Remote Verification Checklist
 
 - `https://api.yourdomain.com/health` returns `{"status":"ok"}`.
-- `https://api.yourdomain.com/ready` reports `db: ok` and `redis: ok`.
+- `https://api.yourdomain.com/ready` reports `db: ok`, `redis: ok`, and `migrations: ok` (with `schema_rev == schema_head`).
 - `https://api.yourdomain.com/ready/embeddings` returns `ok: true`.
 - Vercel frontend loads.
 - Vercel frontend can create a landscape.
