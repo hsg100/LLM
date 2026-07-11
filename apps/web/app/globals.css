@@ -6,6 +6,38 @@
   --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* Surfaces the FieldMap tokens defined below as Tailwind utilities
+   (bg-panel, text-t1, border-bd, …). `inline` emits var() into the utility
+   rather than resolving at build time, so [data-fm="dark"] keeps switching
+   them at runtime. Values are referenced, never restated — this adds a
+   utility surface without changing a single rendered colour. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-bd: var(--bd);
+  --color-bd2: var(--bd2);
+  --color-t1: var(--t1);
+  --color-t2: var(--t2);
+  --color-t3: var(--t3);
+  --color-t4: var(--t4);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-bg: var(--accent-bg);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-item: var(--sidebar-item);
+  --color-topbar: var(--topbar);
+  --color-warm: var(--warm);
+  --color-warm-bd: var(--warm-bd);
+  --color-good: var(--good);
+  --color-good-bg: var(--good-bg);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-map-edge: var(--map-edge);
+  --color-node-stroke: var(--node-stroke);
+  --color-grid-line: var(--grid-line);
+}
+
 /*
   The default border color has changed to `currentcolor` in Tailwind CSS v4,
   so we've added these compatibility styles to make sure everything still
