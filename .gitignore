@@ -19,6 +19,7 @@ build/
 *.sqlite
 *.sqlite3
 *.db
+dump.rdb
 .DS_Store
 *.swp
 .idea/
