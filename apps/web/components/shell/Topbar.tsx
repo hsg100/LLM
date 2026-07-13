@@ -50,6 +50,12 @@ export function Topbar() {
   }, [landscapeId]);
 
   const crumb = (() => {
+    if (pathname === "/")
+      return { left: "fieldmap /", leftHref: "/", right: "Home", rightHref: null as string | null };
+    if (pathname === "/learn" || pathname.startsWith("/learn/"))
+      return { left: "learn /", leftHref: "/", right: "LLM pathway", rightHref: null as string | null };
+    if (pathname === "/review" || pathname.startsWith("/review/"))
+      return { left: "review /", leftHref: "/", right: "Practice & retention", rightHref: null as string | null };
     if (pathname === "/search" || pathname.startsWith("/search"))
       return { left: "pipeline /", leftHref: "/landscapes", right: "New landscape", rightHref: null as string | null };
     if (pathname.startsWith("/jobs/"))

@@ -6,8 +6,9 @@ import { AppShell } from "../components/shell/AppShell";
 import { AuthGate } from "../components/auth/AuthGate";
 
 export const metadata: Metadata = {
-  title: "FieldMap — research OS",
-  description: "Personal AI research and learning engine for ML/AI papers",
+  title: "FieldMap — learn and research LLMs",
+  description:
+    "An interactive learning and research environment for understanding LLMs from first principles to current research",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

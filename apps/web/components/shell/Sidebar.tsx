@@ -8,18 +8,20 @@ import { readLastLandscape, rememberLandscape } from "../../lib/landscape/recent
 import { FieldMapLogo } from "./Logo";
 
 /**
- * Two-scope navigation.
+ * Product-first, two-scope navigation.
  *
- *  • GLOBAL items (All landscapes / New landscape / Settings / Design system)
- *    always work and never depend on a landscape.
+ *  • PRODUCT items (Home / Learn / Research / Review / Settings) are the
+ *    primary surfaces. Research links to the existing /landscapes workspace.
+ *  • RESEARCH TOOLS (New landscape / Job monitor) stay reachable without
+ *    occupying prime learner navigation.
  *  • LANDSCAPE items (Overview … Export) act on the *current landscape*. The
  *    current landscape is resolved from the URL, falling back to the
  *    last-visited one (so the scoped nav keeps working when you step out to a
  *    global page). When no landscape has ever been opened, the scoped items
  *    render locked so it's obvious they need a landscape first.
  *
- * A context card at the top always shows which landscape (if any) the scoped
- * section targets, with an explicit way back to "all landscapes".
+ * A context card always shows which landscape (if any) the scoped section
+ * targets, with an explicit way back to "all landscapes".
  */
 type Item = {
   suffix: string;
@@ -44,11 +46,23 @@ const SCOPED_ITEMS: Item[] = [
   { suffix: "/export", label: "Obsidian export", icon: <IconExport />, isActive: (p, id) => p.startsWith(`/landscape/${id}/export`) },
 ];
 
-const GLOBAL_ITEMS: { href: string; label: string; icon: ReactNode; isActive: (p: string) => boolean }[] = [
-  { href: "/landscapes", label: "All landscapes", icon: <IconStack />, isActive: (p) => p === "/landscapes" },
+const PRODUCT_ITEMS: { href: string; label: string; icon: ReactNode; isActive: (p: string) => boolean }[] = [
+  { href: "/", label: "Home", icon: <IconHome />, isActive: (p) => p === "/" },
+  { href: "/learn", label: "Learn", icon: <IconLearnPath />, isActive: (p) => p === "/learn" || p.startsWith("/learn/") },
+  {
+    href: "/landscapes",
+    label: "Research",
+    icon: <IconStack />,
+    isActive: (p) =>
+      p === "/landscapes" || p.startsWith("/landscape/") || p.startsWith("/paper/") || p.startsWith("/search") || p.startsWith("/jobs"),
+  },
+  { href: "/review", label: "Review", icon: <IconReview />, isActive: (p) => p === "/review" || p.startsWith("/review/") },
+  { href: "/settings", label: "Settings", icon: <IconGear />, isActive: (p) => p.startsWith("/settings") },
+];
+
+const RESEARCH_TOOL_ITEMS: { href: string; label: string; icon: ReactNode; isActive: (p: string) => boolean }[] = [
   { href: "/search", label: "New landscape", icon: <IconSearch />, isActive: (p) => p.startsWith("/search") },
   { href: "/jobs", label: "Job monitor", icon: <IconJob />, isActive: (p) => p === "/jobs" || p.startsWith("/jobs/") },
-  { href: "/settings", label: "Settings", icon: <IconGear />, isActive: (p) => p.startsWith("/settings") },
 ];
 
 export function Sidebar() {
@@ -107,7 +121,7 @@ export function Sidebar() {
       }}
     >
       <Link
-        href="/landscapes"
+        href="/"
         style={{
           all: "unset",
           cursor: "pointer",
@@ -122,7 +136,7 @@ export function Sidebar() {
         <div style={{ lineHeight: 1 }}>
           <div style={{ fontSize: 14.5, fontWeight: 600, letterSpacing: "-0.02em" }}>FieldMap</div>
           <div className="font-mono" style={{ fontSize: 9, color: "var(--t4)", letterSpacing: "0.14em", marginTop: 3 }}>
-            RESEARCH OS
+            LEARN · RESEARCH
           </div>
         </div>
       </Link>
@@ -138,9 +152,15 @@ export function Sidebar() {
           minHeight: 0,
         }}
       >
-        {/* ---- GLOBAL ---- */}
-        <SectionTitle>WORKSPACE</SectionTitle>
-        {GLOBAL_ITEMS.map((it) => (
+        {/* ---- PRODUCT ---- */}
+        <SectionTitle>FIELDMAP</SectionTitle>
+        {PRODUCT_ITEMS.map((it) => (
+          <NavRow key={it.href} href={it.href} icon={it.icon} label={it.label} active={it.isActive(pathname)} />
+        ))}
+
+        {/* ---- RESEARCH TOOLS ---- */}
+        <SectionTitle>RESEARCH TOOLS</SectionTitle>
+        {RESEARCH_TOOL_ITEMS.map((it) => (
           <NavRow key={it.href} href={it.href} icon={it.icon} label={it.label} active={it.isActive(pathname)} />
         ))}
 
@@ -323,6 +343,26 @@ function LockedRow({ icon, label }: { icon: ReactNode; label: string }) {
 }
 
 /* ---------- icons (single-stroke, inherit currentColor) ---------- */
+function IconHome() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+      <path
+        d="M2 6.5L7.5 2l5.5 4.5V13a.5.5 0 01-.5.5H9V9.5H6v4H2.5A.5.5 0 012 13V6.5z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+function IconLearnPath() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+      <path d="M7.5 3.2c-1.3-1-3-1.4-5-1.2v9.6c2-.2 3.7.2 5 1.2 1.3-1 3-1.4 5-1.2V2c-2-.2-3.7.2-5 1.2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M7.5 3.2v9.6" stroke="currentColor" strokeWidth="1.3" opacity=".7" />
+    </svg>
+  );
+}
 function IconStack() {
   return (
     <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
