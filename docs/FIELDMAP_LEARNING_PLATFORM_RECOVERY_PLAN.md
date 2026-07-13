@@ -758,6 +758,8 @@ Until the first vertical slice works, defer:
 
 Existing defect fixes that protect the core experience—such as jobs API contracts, flashcard readability and meaningful cluster labels—remain in scope when they block a phase.
 
+After the current learning-platform roadmap is complete, conduct the comprehensive product-experience audit defined in [`DEFERRED_PRODUCT_EXPERIENCE_AUDIT_AND_OVERHAUL.md`](./DEFERRED_PRODUCT_EXPERIENCE_AUDIT_AND_OVERHAUL.md) before treating the resulting interface and workflows as final. That audit spans the whole product — proposition, onboarding, home, information architecture, workflows, feature cohesion, terminology, quality-of-life, visual consistency, background-work feedback, performance, mobile, accessibility, settings and telemetry; the landscape-centric experience is one example within it, not its scope. During the remaining phases, record significant usability friction as it is encountered without expanding the active phase to fix it unless it is a genuine blocker.
+
 ---
 
 ## 16. Delivery and Git strategy

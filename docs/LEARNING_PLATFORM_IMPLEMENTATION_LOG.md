@@ -177,6 +177,23 @@ impact. Old bookmarks continue to work in both directions.
 
 ---
 
+## Deferred: comprehensive product-experience audit
+
+After the current learning-platform roadmap is complete, conduct the
+comprehensive product-experience audit defined in
+[`DEFERRED_PRODUCT_EXPERIENCE_AUDIT_AND_OVERHAUL.md`](./DEFERRED_PRODUCT_EXPERIENCE_AUDIT_AND_OVERHAUL.md)
+before treating the resulting interface and workflows as final. The audit
+covers the entire product experience (proposition, onboarding, home,
+navigation, end-to-end workflows, feature cohesion, terminology,
+quality-of-life, visual consistency, background-work feedback, performance,
+mobile, accessibility, settings, telemetry, and whether any frontend or core
+restructuring is warranted); landscape-scoped navigation is recorded there as
+one example, not the scope. Significant usability friction observed during
+the remaining phases should be logged here without expanding the active
+phase, unless it is a genuine blocker.
+
+---
+
 ## Deviations from the specification
 
 1. **Branch name** — `claude/learning-platform-recovery-sscpje` instead of
