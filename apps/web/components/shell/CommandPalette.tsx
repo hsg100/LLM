@@ -80,7 +80,10 @@ export function CommandPalette() {
 
   const commands = useMemo<Cmd[]>(() => {
     const out: Cmd[] = [
-      { id: "g-landscapes", label: "All landscapes", hint: "workspace", href: "/landscapes", group: "Go to" },
+      { id: "g-home", label: "Home", hint: "learning dashboard", href: "/", group: "Go to" },
+      { id: "g-learn", label: "Learn", hint: "LLM pathway", href: "/learn", group: "Go to" },
+      { id: "g-research", label: "Research", hint: "landscapes", href: "/landscapes", group: "Go to" },
+      { id: "g-review", label: "Review", hint: "practice", href: "/review", group: "Go to" },
       { id: "g-new", label: "New landscape", hint: "pipeline", href: "/search", group: "Go to" },
       { id: "g-jobs", label: "Job monitor", hint: "pipeline", href: "/jobs", group: "Go to" },
       { id: "g-settings", label: "Settings", hint: "system", href: "/settings", group: "Go to" },

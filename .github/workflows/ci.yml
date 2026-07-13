@@ -66,6 +66,8 @@ jobs:
           cache-dependency-path: apps/web/package-lock.json
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Test (vitest)
+        run: npm test
       # `next build` type-checks the whole app; it's the green gate until an
       # ESLint config is added (`next lint` is interactive without one).
       - name: Build (next build)
