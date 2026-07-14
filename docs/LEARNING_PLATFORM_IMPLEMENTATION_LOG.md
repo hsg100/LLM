@@ -229,6 +229,65 @@ discipline, bounded deadlock retry).
 | `check:learn-bundle` | ✅ no canary/`correct_index` in /learn chunks; ≤450 kB budget (current ~345 kB) |
 | Docker image smoke | ⚠ not runnable in the authoring sandbox (no Docker daemon) — executed by the CI `images` job on the PR |
 
+### Codex takeover audit — 14 July 2026
+
+The takeover started from `830812389e2c9810ff2e868a917d363bbbdd5d87` on
+`feat/phase-2-curriculum-foundation`; PR #8 was draft, had no submitted
+reviews or review threads, and its prior backend/frontend/images checks were
+green. The independent pass confirmed the client outbox defects called out in
+the handoff:
+
+- failed reading-position writes displayed a local-save message without
+  retaining the failed `PUT`;
+- pending checkpoint attempts were not scoped to the authenticated user;
+- checkpoint attempts were retained only after the network request failed,
+  not before submission;
+- retained attempts kept their original catalogue hash permanently; and
+- localStorage failures could be swallowed while the UI implied recovery was
+  available.
+
+Fixes added a versioned, user-scoped local learning outbox
+(`fm-learn-outbox-v2`) for both reading positions and checkpoints. Entries are
+write-ahead retained before network submission, coalesced by
+user/lesson/version for progress, bounded by age and count, retried on mount
+and browser `online`, protected from duplicate concurrent submissions, and
+cleared only after the exact retained entry succeeds. Retries verify the
+current signed-in user before submission. Same-version retained entries may be
+rebased to the current page catalogue hash when their referenced lesson blocks
+or checkpoint IDs/options still match; changed-version checkpoint answers and
+invalid references are preserved but not auto-submitted.
+
+Additional audit fixes:
+
+- restored visible keyboard focus on Learn cards and checkpoint controls after
+  inline reset styles had removed focus outlines;
+- made the API image's catalogue location explicit with
+  `CURRICULUM_CATALOG_DIR=/curriculum/build`; and
+- tightened the Vitest `server-only` alias so the full frontend suite resolves
+  the server-only sentinel deterministically.
+
+Takeover validation:
+
+| Check | Result |
+|---|---|
+| `npm install` | ✅ completed with the project lockfile; local Node 23 emitted engine-range warnings and npm reported two existing vulnerabilities |
+| Focused outbox tests | ✅ 14 deterministic tests passed (progress retention/retry/coalescing, checkpoint write-ahead/retry, user isolation, catalogue reconciliation, storage failure, duplicate retry guard) |
+| Full frontend tests | ✅ 51 passed |
+| `next build` | ✅ green; Google Font optimization warned because the stylesheet could not be downloaded in this environment |
+| `check:learn-bundle` | ✅ no Learn bundle leakage; route bundles stayed below the 450 kB budget |
+| `curriculum-tools validate` / `build --check` / `emit-schemas --check` / `semver-check --base-ref origin/main` | ✅ clean; semantic check correctly treated Phase 2 as the initial curriculum introduction |
+| Compiler tests | ✅ 26 passed |
+| Backend ruff | ✅ clean |
+| Backend tests | ✅ 152 passed, 34 skipped (local environment lacked Postgres-backed integration services) |
+| Browser QA against local production build | ✅ `/learn`, all active topic pages, all four lesson pages, and legacy `/`, `/landscapes`, `/review`, `/search` checked at 1365, 430, 390 and 360 px with no horizontal overflow or page errors; offline checkpoint retention, keyboard focus, and reduced-motion context verified |
+| Docker/image smoke and compose boot | ⚠ not runnable locally: Docker CLI was present but the daemon socket was unavailable; rely on PR `images` CI for this gate |
+| Migration upgrade/downgrade/drift | ⚠ not rerun locally in takeover because Postgres/Alembic integration services were unavailable; prior PR CI and original Phase 2 evidence cover this until new CI finishes |
+
+The deferred product-experience audit remains deferred. Notable friction found
+inside Phase 2 only: local server-graded pass/fail browser QA could not be
+exercised without the API database stack, and the local package toolchain used
+Node 23 while the app declares Node 20/22/24 ranges.
+
 ### Production runbook — migration 0007 (deployment gate)
 
 Production application of migration 0007 is **blocked** until every line
