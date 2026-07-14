@@ -19,12 +19,13 @@ import { useQuery } from "@tanstack/react-query";
 import {
   CatalogueMismatchError,
   CheckpointResult,
-  clearPendingAttempt,
+  clearPendingOperation,
   getLearnProgress,
   postCheckpointAttempt,
   putLessonProgress,
-  readPendingAttempts,
-  savePendingAttempt,
+  retryLessonOutbox,
+  savePendingCheckpoint,
+  savePendingProgress,
 } from "../../lib/learn";
 
 export type RuntimeProps = {
@@ -57,9 +58,12 @@ export function LessonRuntime(props: RuntimeProps) {
 /* ---------------- resume position ---------------- */
 
 function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: RuntimeProps) {
-  const [syncState, setSyncState] = useState<"idle" | "mismatch" | "offline">("idle");
+  const [syncState, setSyncState] = useState<
+    "idle" | "mismatch" | "offline" | "storage" | "incompatible"
+  >("idle");
   const furthest = useRef<number>(-1);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retrying = useRef(false);
 
   const progressQ = useQuery({
     queryKey: ["learn-progress", lessonSlug],
@@ -82,8 +86,16 @@ function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: R
     (blockId: string) => {
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
+        const saved = savePendingProgress({ lessonSlug, lessonVersion, catalogHash, lastBlockId: blockId });
+        if (!saved.ok) {
+          setSyncState("storage");
+          return;
+        }
         putLessonProgress({ lessonSlug, lessonVersion, catalogHash, lastBlockId: blockId })
-          .then(() => setSyncState("idle"))
+          .then(() => {
+            clearPendingOperation(saved.entry.id);
+            setSyncState("idle");
+          })
           .catch((e) =>
             setSyncState(e instanceof CatalogueMismatchError ? "mismatch" : "offline")
           );
@@ -91,6 +103,28 @@ function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: R
     },
     [lessonSlug, lessonVersion, catalogHash]
   );
+
+  const retryProgress = useCallback(() => {
+    if (retrying.current) return;
+    retrying.current = true;
+    retryLessonOutbox(
+      { lessonSlug, lessonVersion, catalogHash, blockIds, checkpointSlug: "", questions: [] },
+      (event) => {
+        if (event.entry.kind !== "progress") return;
+        if (event.kind === "progress-synced") setSyncState("idle");
+        if (event.kind === "retry-paused") setSyncState(event.reason);
+        if (event.kind === "incompatible") setSyncState("incompatible");
+      }
+    ).finally(() => {
+      retrying.current = false;
+    });
+  }, [lessonSlug, lessonVersion, catalogHash, blockIds]);
+
+  useEffect(() => {
+    retryProgress();
+    window.addEventListener("online", retryProgress);
+    return () => window.removeEventListener("online", retryProgress);
+  }, [retryProgress]);
 
   useEffect(() => {
     if (typeof IntersectionObserver === "undefined") return;
@@ -136,7 +170,19 @@ function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: R
         </Note>
       )}
       {syncState === "offline" && (
-        <Note>Position saved locally — the API can&apos;t be reached, will retry as you read.</Note>
+        <Note>Reading position saved on this device — the API can&apos;t be reached yet.</Note>
+      )}
+      {syncState === "storage" && (
+        <Note tone="warn">
+          Automatic local saving is unavailable in this browser, so your reading position could
+          not be safely retained.
+        </Note>
+      )}
+      {syncState === "incompatible" && (
+        <Note tone="warn">
+          A saved reading position no longer matches this lesson version. Review the lesson before
+          continuing.
+        </Note>
       )}
     </div>
   );
@@ -154,26 +200,43 @@ function Checkpoint({
 }: RuntimeProps) {
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [result, setResult] = useState<CheckpointResult | null>(null);
-  const [state, setState] = useState<"idle" | "submitting" | "mismatch" | "error">("idle");
+  const [state, setState] = useState<
+    "idle" | "submitting" | "mismatch" | "error" | "storage" | "changed" | "invalid"
+  >("idle");
+  const retrying = useRef(false);
   const complete = useMemo(
     () => questions.every((q) => answers[q.id] !== undefined),
     [questions, answers]
   );
 
-  // Resubmit attempts retained from an earlier 409/outage — same attempt id,
-  // so the eventual submission is exactly the original attempt.
-  useEffect(() => {
-    for (const pending of readPendingAttempts()) {
-      if (pending.lessonSlug !== lessonSlug) continue;
-      postCheckpointAttempt(pending)
-        .then((r) => {
-          clearPendingAttempt(pending.clientAttemptId);
-          setResult(r);
+  const retryCheckpoint = useCallback(() => {
+    if (retrying.current) return;
+    retrying.current = true;
+    retryLessonOutbox(
+      { lessonSlug, lessonVersion, catalogHash, blockIds: [], checkpointSlug, questions },
+      (event) => {
+        if (event.entry.kind !== "checkpoint") return;
+        if (event.kind === "checkpoint-synced") {
+          setResult(event.result);
           setState("idle");
-        })
-        .catch(() => setState((s) => (s === "idle" ? "mismatch" : s)));
-    }
-  }, [lessonSlug]);
+        }
+        if (event.kind === "retry-paused") {
+          setState((s) => (s === "idle" ? (event.reason === "mismatch" ? "mismatch" : "error") : s));
+        }
+        if (event.kind === "incompatible") {
+          setState(event.reason === "lesson-version-changed" ? "changed" : "invalid");
+        }
+      }
+    ).finally(() => {
+      retrying.current = false;
+    });
+  }, [lessonSlug, lessonVersion, catalogHash, checkpointSlug, questions]);
+
+  useEffect(() => {
+    retryCheckpoint();
+    window.addEventListener("online", retryCheckpoint);
+    return () => window.removeEventListener("online", retryCheckpoint);
+  }, [retryCheckpoint]);
 
   async function submit() {
     const attempt = {
@@ -185,12 +248,17 @@ function Checkpoint({
       clientAttemptId: newAttemptId(),
     };
     setState("submitting");
+    const saved = savePendingCheckpoint(attempt);
+    if (!saved.ok) {
+      setState("storage");
+      return;
+    }
     try {
       const r = await postCheckpointAttempt(attempt);
+      clearPendingOperation(saved.entry.id);
       setResult(r);
       setState("idle");
     } catch (e) {
-      savePendingAttempt(attempt); // never silently discard the learner's work
       setState(e instanceof CatalogueMismatchError ? "mismatch" : "error");
     }
   }
@@ -267,10 +335,13 @@ function Checkpoint({
       <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         {!result && (
           <button
+            className="fm-action-button"
             onClick={submit}
             disabled={!complete || state === "submitting"}
             style={{
-              all: "unset",
+              border: "none",
+              font: "inherit",
+              appearance: "none",
               cursor: complete ? "pointer" : "not-allowed",
               opacity: complete ? 1 : 0.5,
               padding: "9px 16px",
@@ -295,12 +366,17 @@ function Checkpoint({
         )}
         {result && !result.passed && (
           <button
+            className="fm-action-button"
             onClick={() => {
               setResult(null);
               setAnswers({});
             }}
             style={{
-              all: "unset",
+              border: "none",
+              font: "inherit",
+              appearance: "none",
+              background: "transparent",
+              padding: 0,
               cursor: "pointer",
               fontSize: 12.5,
               fontWeight: 600,
@@ -323,6 +399,24 @@ function Checkpoint({
         <Note>
           Couldn&apos;t reach the API — your answers are saved on this device and will be
           resubmitted when you reopen this lesson.
+        </Note>
+      )}
+      {state === "storage" && (
+        <Note tone="warn">
+          Automatic local saving is unavailable in this browser, so your checkpoint answers were
+          not submitted. Enable storage or try from another browser before retaking.
+        </Note>
+      )}
+      {state === "changed" && (
+        <Note tone="warn">
+          This lesson changed since those answers were saved. Review the updated lesson and retake
+          the checkpoint; the saved answers were not submitted.
+        </Note>
+      )}
+      {state === "invalid" && (
+        <Note tone="warn">
+          Saved checkpoint answers no longer match this lesson&apos;s questions, so they were not
+          submitted automatically.
         </Note>
       )}
     </section>
