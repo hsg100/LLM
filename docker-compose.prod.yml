@@ -31,7 +31,9 @@ services:
       - backend
 
   api:
-    build: ./apps/api
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-2}
     env_file:
@@ -57,7 +59,9 @@ services:
       - public
 
   worker:
-    build: ./apps/api
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     command: python -m app.workers.worker
     env_file:

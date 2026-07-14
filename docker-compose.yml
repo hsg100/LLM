@@ -26,7 +26,9 @@ services:
       retries: 20
 
   api:
-    build: ./apps/api
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     env_file: .env
     environment:
@@ -36,6 +38,7 @@ services:
       - "8000:8000"
     volumes:
       - ./apps/api:/app
+      - ./curriculum/build:/curriculum/build:ro
       - obsidian_export:/data/obsidian
       - pdf_storage:/data/pdfs
     depends_on:
@@ -45,7 +48,9 @@ services:
         condition: service_healthy
 
   worker:
-    build: ./apps/api
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     command: python -m app.workers.worker
     env_file: .env
     environment:
@@ -53,6 +58,7 @@ services:
       REDIS_URL: redis://redis:6379/0
     volumes:
       - ./apps/api:/app
+      - ./curriculum/build:/curriculum/build:ro
       - obsidian_export:/data/obsidian
       - pdf_storage:/data/pdfs
     depends_on:

@@ -1,7 +1,15 @@
 PROD_COMPOSE = docker compose --env-file .env.production -f docker-compose.prod.yml
 LOCAL_COMPOSE = docker compose
 
-.PHONY: prod-up prod-down prod-logs prod-ps prod-health prod-migrate prod-backup-db local-up local-down
+.PHONY: prod-up prod-down prod-logs prod-ps prod-health prod-migrate prod-backup-db local-up local-down smoke-images
+
+# Build the api/worker images from the repo-root context and prove the
+# curriculum catalogue is present and integrity-checked inside them
+# (docs/PHASE_2_TECHNICAL_DESIGN.md §5.4). Mirrors the CI images job.
+smoke-images:
+	docker build -t fieldmap-api -f apps/api/Dockerfile .
+	docker run --rm fieldmap-api python -m app.scripts.smoke_curriculum
+	$(LOCAL_COMPOSE) build api worker
 
 prod-up:
 	$(PROD_COMPOSE) up -d --build
