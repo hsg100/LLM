@@ -295,6 +295,7 @@ Takeover validation:
 | Browser QA against local production build | ✅ `/learn`, all active topic pages, all four lesson pages, and legacy `/`, `/landscapes`, `/review`, `/search` checked at 1365, 430, 390 and 360 px with no horizontal overflow or page errors; offline checkpoint retention, keyboard focus, and reduced-motion context verified |
 | Docker/image smoke and compose boot | ⚠ not runnable locally: Docker CLI was present but the daemon socket was unavailable; rely on PR `images` CI for this gate |
 | Migration upgrade/downgrade/drift | ⚠ not rerun locally in takeover because Postgres/Alembic integration services were unavailable; prior PR CI and original Phase 2 evidence cover this until new CI finishes |
+| Fresh PR CI after progress serialization fix | ✅ GitHub Actions run `29343163126` on `3b3e9c7` succeeded for `backend (api)`, `frontend (web)` and `images (api/worker smoke)`; Vercel commit status was success/Ready |
 
 The deferred product-experience audit remains deferred. Notable friction found
 inside Phase 2 only: local server-graded pass/fail browser QA could not be
