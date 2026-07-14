@@ -1,0 +1,20 @@
+[project]
+name = "curriculum-tools"
+version = "0.1.0"
+description = "FieldMap curriculum compiler: validates curriculum sources and builds the committed catalogue artifacts"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "PyYAML>=6.0",
+    "markdown-it-py>=3.0",
+]
+
+[project.scripts]
+curriculum-tools = "curriculum_tools.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["curriculum_tools*"]

@@ -1,0 +1,15 @@
+slug: embeddings-and-representation
+title: Embeddings and representation
+summary: Meaning as geometry — vectors, similarity, projection caveats.
+status: active
+prerequisites:
+  - tokens-and-tokenisation
+learning_objectives:
+  - Explain what an embedding vector represents
+  - Interpret cosine similarity between embeddings
+  - Explain why 2D visualisations of embeddings are projections, not the real geometry
+lessons:
+  - embedding-space
+concepts:
+  - embedding
+  - vector-similarity

@@ -1,0 +1,5 @@
+slug: sampling
+name: Sampling
+short_definition: The random draw that picks one concrete next token from the (possibly reshaped) distribution.
+prerequisites:
+  - probability-distribution

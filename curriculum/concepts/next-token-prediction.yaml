@@ -1,0 +1,5 @@
+slug: next-token-prediction
+name: Next-token prediction
+short_definition: The training objective of predicting the most likely next token given the preceding tokens.
+prerequisites:
+  - token

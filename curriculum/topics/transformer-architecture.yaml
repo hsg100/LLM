@@ -1,0 +1,11 @@
+slug: transformer-architecture
+title: Transformer architecture
+summary: The block structure that everything else plugs into.
+status: planned
+prerequisites:
+  - neural-network-foundations
+  - embeddings-and-representation
+learning_objectives:
+  - Identify the components of a transformer block and how they compose
+lessons: []
+concepts: []

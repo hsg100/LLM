@@ -1,0 +1,11 @@
+slug: what-language-models-do
+title: What language models do
+summary: Next-token prediction, capabilities and limits.
+status: planned
+prerequisites: []
+learning_objectives:
+  - Describe a language model as a next-token predictor
+  - Distinguish capability claims from mechanism claims
+lessons: []
+concepts:
+  - next-token-prediction

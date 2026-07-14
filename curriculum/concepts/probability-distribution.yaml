@@ -1,0 +1,5 @@
+slug: probability-distribution
+name: Next-token probability distribution
+short_definition: The model's output for one step — a probability for every token in the vocabulary of being next.
+prerequisites:
+  - next-token-prediction

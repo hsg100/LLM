@@ -1,0 +1,5 @@
+slug: attention
+name: Attention
+short_definition: The mechanism by which each token selectively pulls information from other tokens, weighted by learned relevance.
+prerequisites:
+  - embedding

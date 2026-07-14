@@ -1,0 +1,11 @@
+slug: training-and-next-token-prediction
+title: Training and next-token prediction
+summary: Loss, gradients and what pre-training optimises.
+status: planned
+prerequisites:
+  - transformer-architecture
+learning_objectives:
+  - Explain what the pre-training objective optimises and what it does not
+lessons: []
+concepts:
+  - next-token-prediction

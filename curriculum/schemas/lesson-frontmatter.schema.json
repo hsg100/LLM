@@ -1,0 +1,190 @@
+{
+  "$defs": {
+    "Checkpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "concept-check",
+          "title": "Kind",
+          "type": "string"
+        },
+        "pass_score": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Pass Score",
+          "type": "number"
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/CheckpointQuestion"
+          },
+          "minItems": 1,
+          "title": "Questions",
+          "type": "array"
+        },
+        "slug": {
+          "title": "Slug",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slug",
+        "kind",
+        "pass_score",
+        "questions"
+      ],
+      "title": "Checkpoint",
+      "type": "object"
+    },
+    "CheckpointQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "concept": {
+          "title": "Concept",
+          "type": "string"
+        },
+        "correct_index": {
+          "minimum": 0,
+          "title": "Correct Index",
+          "type": "integer"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Options",
+          "type": "array"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "prompt",
+        "options",
+        "correct_index",
+        "concept"
+      ],
+      "title": "CheckpointQuestion",
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "url"
+      ],
+      "title": "Source",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "checkpoint": {
+      "$ref": "#/$defs/Checkpoint"
+    },
+    "concepts": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Concepts",
+      "type": "array"
+    },
+    "demo_fallbacks": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "title": "Demo Fallbacks",
+      "type": "object"
+    },
+    "demos": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Demos",
+      "type": "array"
+    },
+    "duration_minutes": {
+      "minimum": 1,
+      "title": "Duration Minutes",
+      "type": "integer"
+    },
+    "objectives": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Objectives",
+      "type": "array"
+    },
+    "slug": {
+      "title": "Slug",
+      "type": "string"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/Source"
+      },
+      "minItems": 1,
+      "title": "Sources",
+      "type": "array"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "topic": {
+      "title": "Topic",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "slug",
+    "title",
+    "topic",
+    "version",
+    "duration_minutes",
+    "objectives",
+    "checkpoint",
+    "sources"
+  ],
+  "title": "LessonFrontmatter",
+  "type": "object"
+}

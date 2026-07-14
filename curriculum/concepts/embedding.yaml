@@ -1,0 +1,5 @@
+slug: embedding
+name: Embedding
+short_definition: A learned vector of numbers that represents a token (or text) so that related meanings get nearby vectors.
+prerequisites:
+  - token

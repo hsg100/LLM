@@ -1,0 +1,5 @@
+slug: tokenizer
+name: Tokenizer
+short_definition: The fixed procedure that splits text into tokens and maps each token to an integer ID.
+prerequisites:
+  - token

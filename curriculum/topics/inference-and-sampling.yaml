@@ -1,0 +1,16 @@
+slug: inference-and-sampling
+title: Inference and sampling
+summary: Temperature, top-p and where model outputs come from.
+status: active
+prerequisites:
+  - attention
+learning_objectives:
+  - Distinguish the model's probability distribution from the sampling step
+  - Predict how temperature and top-p change output diversity
+lessons:
+  - sampling-controls
+concepts:
+  - probability-distribution
+  - temperature
+  - top-p
+  - sampling

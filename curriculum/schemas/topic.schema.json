@@ -1,0 +1,66 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "concepts": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Concepts",
+      "type": "array"
+    },
+    "learning_objectives": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Learning Objectives",
+      "type": "array"
+    },
+    "lessons": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Lessons",
+      "type": "array"
+    },
+    "prerequisites": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Prerequisites",
+      "type": "array"
+    },
+    "slug": {
+      "title": "Slug",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "active",
+        "planned",
+        "retired"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "slug",
+    "title",
+    "summary",
+    "status"
+  ],
+  "title": "Topic",
+  "type": "object"
+}

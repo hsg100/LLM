@@ -1,0 +1,10 @@
+slug: neural-network-foundations
+title: Neural-network foundations
+summary: "The minimum you need: layers, weights, training signal."
+status: planned
+prerequisites:
+  - embeddings-and-representation
+learning_objectives:
+  - Describe how layers of weighted sums and nonlinearities transform representations
+lessons: []
+concepts: []

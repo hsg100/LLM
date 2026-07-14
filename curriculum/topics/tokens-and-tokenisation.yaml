@@ -1,0 +1,16 @@
+slug: tokens-and-tokenisation
+title: Tokens and tokenisation
+summary: How text becomes model input, and what that costs.
+status: active
+prerequisites:
+  - what-language-models-do
+learning_objectives:
+  - Explain why models operate on tokens rather than characters or words
+  - Predict roughly how a tokenizer will split unfamiliar text
+  - Connect token counts to context limits and cost
+lessons:
+  - tokens-and-tokenisers
+concepts:
+  - token
+  - tokenizer
+  - context-window

@@ -1,0 +1,8 @@
+# Declared interactive-demo IDs (Phase 2: manifest only).
+# Implementations arrive with the Phase 3 typed runtime registry; the
+# validator uses this list so a lesson can never reference an unknown demo.
+demos:
+  - tokenization-lab
+  - embedding-space-explorer
+  - attention-explorer
+  - sampling-lab
