@@ -20,13 +20,14 @@ import {
   CatalogueMismatchError,
   CheckpointResult,
   clearPendingOperation,
+  flushProgressOutbox,
   getLearnProgress,
   postCheckpointAttempt,
-  putLessonProgress,
   retryLessonOutbox,
   savePendingCheckpoint,
   savePendingProgress,
 } from "../../lib/learn";
+import type { RetryEvent } from "../../lib/learn";
 
 export type RuntimeProps = {
   lessonSlug: string;
@@ -73,14 +74,23 @@ function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: R
   const mine = progressQ.data?.lessons.find(
     (l) => l.lesson_slug === lessonSlug && l.lesson_version === lessonVersion
   );
+  const restoredIndex = mine?.last_block_id ? blockIds.indexOf(mine.last_block_id) : -1;
+  if (restoredIndex > furthest.current) furthest.current = restoredIndex;
 
-  // Scroll to the stored resume position once progress arrives.
+  // Seed the session's monotonic position before observing blocks, then scroll once.
   const restored = useRef(false);
   useEffect(() => {
     if (restored.current || !mine?.last_block_id) return;
     restored.current = true;
     document.getElementById(`block-${mine.last_block_id}`)?.scrollIntoView({ block: "start" });
   }, [mine?.last_block_id]);
+
+  const handleProgressEvent = useCallback((event: RetryEvent) => {
+    if (event.entry.kind !== "progress") return;
+    if (event.kind === "progress-synced") setSyncState("idle");
+    if (event.kind === "retry-paused") setSyncState(event.reason);
+    if (event.kind === "incompatible") setSyncState("incompatible");
+  }, []);
 
   const push = useCallback(
     (blockId: string) => {
@@ -91,17 +101,13 @@ function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: R
           setSyncState("storage");
           return;
         }
-        putLessonProgress({ lessonSlug, lessonVersion, catalogHash, lastBlockId: blockId })
-          .then(() => {
-            clearPendingOperation(saved.entry.id);
-            setSyncState("idle");
-          })
-          .catch((e) =>
-            setSyncState(e instanceof CatalogueMismatchError ? "mismatch" : "offline")
-          );
+        flushProgressOutbox(
+          { lessonSlug, lessonVersion, catalogHash, blockIds, checkpointSlug: "", questions: [] },
+          handleProgressEvent
+        );
       }, 1500);
     },
-    [lessonSlug, lessonVersion, catalogHash]
+    [lessonSlug, lessonVersion, catalogHash, blockIds, handleProgressEvent]
   );
 
   const retryProgress = useCallback(() => {
@@ -109,16 +115,11 @@ function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: R
     retrying.current = true;
     retryLessonOutbox(
       { lessonSlug, lessonVersion, catalogHash, blockIds, checkpointSlug: "", questions: [] },
-      (event) => {
-        if (event.entry.kind !== "progress") return;
-        if (event.kind === "progress-synced") setSyncState("idle");
-        if (event.kind === "retry-paused") setSyncState(event.reason);
-        if (event.kind === "incompatible") setSyncState("incompatible");
-      }
+      handleProgressEvent
     ).finally(() => {
       retrying.current = false;
     });
-  }, [lessonSlug, lessonVersion, catalogHash, blockIds]);
+  }, [lessonSlug, lessonVersion, catalogHash, blockIds, handleProgressEvent]);
 
   useEffect(() => {
     retryProgress();
@@ -128,6 +129,7 @@ function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: R
 
   useEffect(() => {
     if (typeof IntersectionObserver === "undefined") return;
+    if (progressQ.isPending) return;
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -146,7 +148,7 @@ function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: R
       if (el) observer.observe(el);
     }
     return () => observer.disconnect();
-  }, [blockIds, push]);
+  }, [blockIds, mine?.last_block_id, progressQ.isPending, push]);
 
   return (
     <div style={{ margin: "6px 0 18px", minHeight: 18 }} aria-live="polite">
@@ -255,7 +257,7 @@ function Checkpoint({
     }
     try {
       const r = await postCheckpointAttempt(attempt);
-      clearPendingOperation(saved.entry.id);
+      clearPendingOperation(saved.entry.id, saved.entry.revision);
       setResult(r);
       setState("idle");
     } catch (e) {

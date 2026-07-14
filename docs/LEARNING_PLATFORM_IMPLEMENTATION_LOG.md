@@ -250,12 +250,25 @@ Fixes added a versioned, user-scoped local learning outbox
 (`fm-learn-outbox-v2`) for both reading positions and checkpoints. Entries are
 write-ahead retained before network submission, coalesced by
 user/lesson/version for progress, bounded by age and count, retried on mount
-and browser `online`, protected from duplicate concurrent submissions, and
-cleared only after the exact retained entry succeeds. Retries verify the
-current signed-in user before submission. Same-version retained entries may be
-rebased to the current page catalogue hash when their referenced lesson blocks
-or checkpoint IDs/options still match; changed-version checkpoint answers and
-invalid references are preserved but not auto-submitted.
+and browser `online`, and protected from duplicate concurrent submissions.
+Retries verify the current signed-in user before submission. Same-version
+retained entries may be rebased to the current page catalogue hash when their
+referenced lesson blocks or checkpoint IDs/options still match;
+changed-version checkpoint answers and invalid references are preserved but not
+auto-submitted.
+
+A follow-up pass found one remaining progress-write race in that first outbox
+fix: overlapping debounced `PUT`s for the same progress key could share an
+outbox ID, allowing an older successful request to clear a newer retained
+position, and allowing server commits to arrive out of lesson order. The
+repair adds explicit outbox revisions plus a serialized latest-value-wins
+progress flusher per user/lesson/version. At most one progress `PUT` is active
+for a key; newer scroll positions replace the retained entry while the active
+request finishes; clearing is conditional on the exact revision that was sent;
+and the flusher immediately submits the latest retained revision after the
+active request completes. Loaded `last_block_id` also seeds the client
+furthest-seen index so observer activity cannot submit a backwards resume
+position after restoration.
 
 Additional audit fixes:
 
@@ -271,10 +284,10 @@ Takeover validation:
 | Check | Result |
 |---|---|
 | `npm install` | ✅ completed with the project lockfile; local Node 23 emitted engine-range warnings and npm reported two existing vulnerabilities |
-| Focused outbox tests | ✅ 14 deterministic tests passed (progress retention/retry/coalescing, checkpoint write-ahead/retry, user isolation, catalogue reconciliation, storage failure, duplicate retry guard) |
-| Full frontend tests | ✅ 51 passed |
+| Focused outbox tests | ✅ 17 deterministic tests passed (progress retention/retry/revision-checked serialization, no backwards resume write, checkpoint write-ahead/retry, user isolation, catalogue reconciliation, storage failure, duplicate retry guard) |
+| Full frontend tests | ✅ 54 passed |
 | `next build` | ✅ green; Google Font optimization warned because the stylesheet could not be downloaded in this environment |
-| `check:learn-bundle` | ✅ no Learn bundle leakage; route bundles stayed below the 450 kB budget |
+| `check:learn-bundle` | ✅ no Learn bundle leakage; route bundles stayed below the 450 kB budget (`/learn/page` 350 kB, lesson page 356 kB, topic page 314 kB raw client JS) |
 | `curriculum-tools validate` / `build --check` / `emit-schemas --check` / `semver-check --base-ref origin/main` | ✅ clean; semantic check correctly treated Phase 2 as the initial curriculum introduction |
 | Compiler tests | ✅ 26 passed |
 | Backend ruff | ✅ clean |

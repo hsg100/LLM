@@ -30,6 +30,14 @@ const PROPS = {
   ],
 };
 
+const EMPTY_PROGRESS = {
+  curriculum_slug: "llm-pathway",
+  curriculum_version: 1,
+  catalog_hash: "hash-current",
+  curriculum: [],
+  lessons: [],
+};
+
 type ObserverInstance = {
   elements: Element[];
   cb: IntersectionObserverCallback;
@@ -39,6 +47,29 @@ type ObserverInstance = {
 
 let observers: ObserverInstance[] = [];
 
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+};
+
+function deferred<T = unknown>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function settle() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 class MockIntersectionObserver {
   elements: Element[] = [];
   constructor(private cb: IntersectionObserverCallback) {
@@ -47,7 +78,9 @@ class MockIntersectionObserver {
   observe = (el: Element) => {
     this.elements.push(el);
   };
-  disconnect = () => {};
+  disconnect = () => {
+    this.elements = [];
+  };
 }
 
 function setUser(user = USER_A) {
@@ -71,11 +104,24 @@ function outbox(): any[] {
 
 async function triggerBlock(blockId: string) {
   const target = document.getElementById(`block-${blockId}`)!;
-  const observer = observers.find((candidate) => candidate.elements.includes(target));
+  let observer: ObserverInstance | undefined;
+  for (let i = 0; i < 5 && !observer; i += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+    observer = observers.find((candidate) => candidate.elements.includes(target));
+  }
   expect(observer).toBeTruthy();
   await act(async () => {
     observer!.cb([{ isIntersecting: true, target } as IntersectionObserverEntry], observer as any);
     vi.advanceTimersByTime(1600);
+  });
+}
+
+async function waitUntilObserved(blockId: string) {
+  const target = document.getElementById(`block-${blockId}`)!;
+  await waitFor(() => {
+    expect(observers.some((candidate) => candidate.elements.includes(target))).toBe(true);
   });
 }
 
@@ -106,12 +152,13 @@ beforeEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   observers = [];
+  document.body.innerHTML = "";
   localStorage.clear();
   setUser();
   apiGet.mockReset();
   apiPost.mockReset();
   apiPut.mockReset();
-  apiGet.mockRejectedValue(new Error("api down"));
+  apiGet.mockResolvedValue(EMPTY_PROGRESS);
   apiPost.mockResolvedValue({
     duplicate: false,
     score: 1.0,
@@ -121,15 +168,17 @@ beforeEach(() => {
     lesson_status: "completed",
   });
   apiPut.mockResolvedValue({});
+  Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
   vi.stubGlobal("crypto", { randomUUID: () => "attempt-new" });
 });
 
 describe("reading-position outbox", () => {
   it("retains a failed progress PUT locally under the signed-in user", async () => {
-    vi.useFakeTimers();
     apiPut.mockRejectedValue(new Error("PUT → network error"));
     renderRuntime();
+    await waitUntilObserved("b1");
+    vi.useFakeTimers();
 
     await triggerBlock("b1");
     vi.useRealTimers();
@@ -175,18 +224,148 @@ describe("reading-position outbox", () => {
     expect(outbox()).toEqual([]);
   });
 
-  it("coalesces progress writes by user, lesson and version", async () => {
-    vi.useFakeTimers();
-    apiPut.mockRejectedValue(new Error("PUT → network error"));
+  it("serializes progress writes and preserves the newest retained position across failure", async () => {
+    const puts: Deferred[] = [];
+    apiPut.mockImplementation(() => {
+      const next = deferred();
+      puts.push(next);
+      return next.promise;
+    });
     renderRuntime();
+    await waitUntilObserved("b1");
+    vi.useFakeTimers();
 
     await triggerBlock("b1");
-    await triggerBlock("b2");
-    vi.useRealTimers();
+    await settle();
+    expect(apiPut).toHaveBeenCalledTimes(1);
+    expect(outbox()).toMatchObject([{ kind: "progress", lastBlockId: "b1" }]);
 
-    await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(2));
+    await triggerBlock("b2");
+    await settle();
+    expect(apiPut).toHaveBeenCalledTimes(1);
+    expect(outbox()).toMatchObject([{ kind: "progress", lastBlockId: "b2" }]);
+
+    await act(async () => {
+      puts[0].resolve({});
+      await Promise.resolve();
+    });
+    await settle();
+    expect(apiPut).toHaveBeenCalledTimes(2);
+    expect(outbox()).toHaveLength(1);
+    expect(outbox()[0]).toMatchObject({ kind: "progress", lastBlockId: "b2" });
+
+    await act(async () => {
+      puts[1].reject(new Error("PUT → network error"));
+      await Promise.resolve();
+    });
+    await settle();
+    expect(screen.getByText(/reading position saved on this device/i)).toBeInTheDocument();
     expect(outbox()).toHaveLength(1);
     expect(outbox()[0]).toMatchObject({ kind: "progress", ownerUserId: "user-a", lastBlockId: "b2" });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await Promise.resolve();
+    });
+    await settle();
+    expect(apiPut).toHaveBeenCalledTimes(3);
+    const delivered = apiPut.mock.calls.map(([, body]) => body.last_block_id);
+    expect(delivered).toEqual(["b1", "b2", "b2"]);
+
+    await act(async () => {
+      puts[2].resolve({});
+      await Promise.resolve();
+    });
+    await settle();
+    expect(outbox()).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("does not let an older progress completion clear a newer revision", async () => {
+    const b1 = deferred();
+    apiPut.mockReturnValueOnce(b1.promise).mockRejectedValueOnce(new Error("PUT → network error"));
+    renderRuntime();
+    await waitUntilObserved("b1");
+    vi.useFakeTimers();
+
+    await triggerBlock("b1");
+    await settle();
+    expect(apiPut).toHaveBeenCalledTimes(1);
+    const firstRevision = outbox()[0].revision;
+
+    await triggerBlock("b2");
+    await settle();
+    const secondRevision = outbox()[0].revision;
+    expect(secondRevision).not.toBe(firstRevision);
+
+    await act(async () => {
+      b1.resolve({});
+      await Promise.resolve();
+    });
+    await settle();
+    expect(apiPut).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/reading position saved on this device/i)).toBeInTheDocument();
+    expect(outbox()).toHaveLength(1);
+    expect(outbox()[0]).toMatchObject({ lastBlockId: "b2", revision: secondRevision });
+    vi.useRealTimers();
+  });
+
+  it("does not submit a backward progress update after loading a later stored resume position", async () => {
+    apiGet.mockResolvedValue({
+      ...EMPTY_PROGRESS,
+      lessons: [
+        {
+          lesson_slug: PROPS.lessonSlug,
+          lesson_version: 1,
+          status: "in_progress",
+          last_block_id: "b2",
+          best_checkpoint_score: null,
+          updated_at: "2026-07-14T00:00:00Z",
+        },
+      ],
+    });
+    renderRuntime();
+    await waitUntilObserved("b1");
+    vi.useFakeTimers();
+
+    await triggerBlock("b1");
+    expect(apiPut).not.toHaveBeenCalled();
+    expect(outbox()).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("does not create parallel progress PUTs across duplicate mounts and online events", async () => {
+    const pending = deferred();
+    apiPut.mockReturnValue(pending.promise);
+    localStorage.setItem(
+      OUTBOX_KEY,
+      JSON.stringify([
+        {
+          kind: "progress",
+          id: "progress:user-a:tokens-and-tokenisers:1",
+          ownerUserId: "user-a",
+          lessonSlug: PROPS.lessonSlug,
+          lessonVersion: 1,
+          catalogHash: "hash-old",
+          revision: "stored-revision",
+          lastBlockId: "b2",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          attempts: 0,
+        },
+      ])
+    );
+
+    renderRuntime();
+    renderRuntime();
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+      window.dispatchEvent(new Event("online"));
+    });
+
+    await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(1));
+    pending.resolve({});
+    await waitFor(() => expect(outbox()).toEqual([]));
   });
 
   it("does not submit retained progress when its block id is no longer valid", async () => {
@@ -216,13 +395,14 @@ describe("reading-position outbox", () => {
   });
 
   it("does not falsely claim local save when storage is unavailable", async () => {
-    vi.useFakeTimers();
     const original = Storage.prototype.setItem;
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (key, value) {
       if (key === OUTBOX_KEY) throw new Error("blocked");
       return original.call(this, key, value);
     });
     renderRuntime();
+    await waitUntilObserved("b1");
+    vi.useFakeTimers();
 
     await triggerBlock("b1");
     vi.useRealTimers();

@@ -111,6 +111,8 @@ const OUTBOX_KEY = "fm-learn-outbox-v2";
 const MAX_OUTBOX_ENTRIES = 50;
 const RETENTION_MS = 1000 * 60 * 60 * 24 * 21;
 const inflight = new Set<string>();
+const progressInflight = new Set<string>();
+let revisionCounter = 0;
 
 type BaseOutboxEntry = {
   id: string;
@@ -118,6 +120,7 @@ type BaseOutboxEntry = {
   lessonSlug: string;
   lessonVersion: number;
   catalogHash: string;
+  revision: string;
   createdAt: number;
   updatedAt: number;
   attempts: number;
@@ -166,24 +169,47 @@ export function currentLearnUserId(): string | null {
   return getStoredUser()?.id ?? null;
 }
 
+function nextRevision(): string {
+  revisionCounter += 1;
+  return `${Date.now().toString(36)}-${revisionCounter.toString(36)}`;
+}
+
+function progressEntryId(ownerUserId: string, lessonSlug: string, lessonVersion: number): string {
+  return `progress:${ownerUserId}:${lessonSlug}:${lessonVersion}`;
+}
+
 function parseEntries(raw: string | null): LearningOutboxEntry[] {
   if (!raw) return [];
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed)) return [];
-  return parsed.filter((entry): entry is LearningOutboxEntry => {
-    if (!entry || typeof entry !== "object") return false;
-    if (entry.kind !== "progress" && entry.kind !== "checkpoint") return false;
-    if (typeof entry.ownerUserId !== "string" || !entry.ownerUserId) return false;
-    if (typeof entry.lessonSlug !== "string" || typeof entry.lessonVersion !== "number") return false;
-    if (typeof entry.catalogHash !== "string") return false;
-    if (typeof entry.createdAt !== "number" || typeof entry.updatedAt !== "number") return false;
-    if (entry.kind === "progress") return typeof entry.lastBlockId === "string";
-    return (
-      typeof entry.checkpointSlug === "string" &&
-      typeof entry.clientAttemptId === "string" &&
-      entry.responses != null &&
-      typeof entry.responses === "object"
-    );
+  return parsed.flatMap((entry): LearningOutboxEntry[] => {
+    if (!entry || typeof entry !== "object") return [];
+    if (entry.kind !== "progress" && entry.kind !== "checkpoint") return [];
+    if (typeof entry.id !== "string" || !entry.id) return [];
+    if (typeof entry.ownerUserId !== "string" || !entry.ownerUserId) return [];
+    if (typeof entry.lessonSlug !== "string" || typeof entry.lessonVersion !== "number") return [];
+    if (typeof entry.catalogHash !== "string") return [];
+    if (typeof entry.createdAt !== "number" || typeof entry.updatedAt !== "number") return [];
+    const base = {
+      ...entry,
+      revision:
+        typeof entry.revision === "string" && entry.revision
+          ? entry.revision
+          : `legacy:${entry.updatedAt}:${entry.id}`,
+    };
+    if (entry.kind === "progress") {
+      if (typeof entry.lastBlockId !== "string") return [];
+      return [base as PendingProgress];
+    }
+    if (
+      typeof entry.checkpointSlug !== "string" ||
+      typeof entry.clientAttemptId !== "string" ||
+      entry.responses == null ||
+      typeof entry.responses !== "object"
+    ) {
+      return [];
+    }
+    return [base as PendingCheckpoint];
   });
 }
 
@@ -225,9 +251,10 @@ export function savePendingProgress(body: {
   const ownerUserId = currentLearnUserId();
   if (!ownerUserId) return { ok: false, reason: "no_current_user" };
   const now = Date.now();
-  const id = `progress:${ownerUserId}:${body.lessonSlug}:${body.lessonVersion}`;
-  const rest = readAllEntries().filter((entry) => entry.id !== id);
-  const previous = readAllEntries().find((entry) => entry.id === id);
+  const id = progressEntryId(ownerUserId, body.lessonSlug, body.lessonVersion);
+  const entries = readAllEntries();
+  const rest = entries.filter((entry) => entry.id !== id);
+  const previous = entries.find((entry) => entry.id === id);
   const entry: PendingProgress = {
     kind: "progress",
     id,
@@ -235,10 +262,11 @@ export function savePendingProgress(body: {
     lessonSlug: body.lessonSlug,
     lessonVersion: body.lessonVersion,
     catalogHash: body.catalogHash,
+    revision: nextRevision(),
     lastBlockId: body.lastBlockId,
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
-    attempts: previous?.attempts ?? 0,
+    attempts: 0,
   };
   try {
     writeAllEntries([...rest, entry]);
@@ -264,6 +292,7 @@ export function savePendingCheckpoint(body: CheckpointAttemptPayload): StorageRe
     lessonVersion: body.lessonVersion,
     checkpointSlug: body.checkpointSlug,
     catalogHash: body.catalogHash,
+    revision: previous?.revision ?? nextRevision(),
     responses: body.responses,
     clientAttemptId: body.clientAttemptId,
     createdAt: previous?.createdAt ?? now,
@@ -278,9 +307,14 @@ export function savePendingCheckpoint(body: CheckpointAttemptPayload): StorageRe
   }
 }
 
-export function clearPendingOperation(entryId: string): void {
+export function clearPendingOperation(entryId: string, expectedRevision?: string): void {
   try {
-    writeAllEntries(readAllEntries().filter((entry) => entry.id !== entryId));
+    writeAllEntries(
+      readAllEntries().filter((entry) => {
+        if (entry.id !== entryId) return true;
+        return expectedRevision != null && entry.revision !== expectedRevision;
+      })
+    );
   } catch {
     /* If clear fails, the in-flight guard and idempotency key still prevent duplicates. */
   }
@@ -288,10 +322,20 @@ export function clearPendingOperation(entryId: string): void {
 
 function markAttempted(entry: LearningOutboxEntry): void {
   const entries = readAllEntries();
-  const idx = entries.findIndex((candidate) => candidate.id === entry.id);
+  const idx = entries.findIndex(
+    (candidate) => candidate.id === entry.id && candidate.revision === entry.revision
+  );
   if (idx < 0) return;
   entries[idx] = { ...entries[idx], attempts: entries[idx].attempts + 1, updatedAt: Date.now() };
   writeAllEntries(entries);
+}
+
+function readProgressEntry(entryId: string): PendingProgress | null {
+  const entry = readAllEntries().find(
+    (candidate): candidate is PendingProgress =>
+      candidate.kind === "progress" && candidate.id === entryId
+  );
+  return entry ?? null;
 }
 
 function checkpointMatches(entry: PendingCheckpoint, ctx: LessonOutboxContext): boolean {
@@ -307,34 +351,75 @@ function checkpointMatches(entry: PendingCheckpoint, ctx: LessonOutboxContext): 
   );
 }
 
+export async function flushProgressOutbox(
+  ctx: LessonOutboxContext,
+  onEvent: (event: RetryEvent) => void
+): Promise<void> {
+  const ownerUserId = currentLearnUserId();
+  if (!ownerUserId) return;
+  const entryId = progressEntryId(ownerUserId, ctx.lessonSlug, ctx.lessonVersion);
+  if (progressInflight.has(entryId)) return;
+
+  progressInflight.add(entryId);
+  try {
+    while (true) {
+      const entry = readProgressEntry(entryId);
+      if (!entry) return;
+      if (entry.ownerUserId !== ownerUserId || entry.lessonSlug !== ctx.lessonSlug) return;
+      if (entry.lessonVersion !== ctx.lessonVersion) {
+        onEvent({ kind: "incompatible", entry, reason: "lesson-version-changed" });
+        return;
+      }
+      if (!ctx.blockIds.includes(entry.lastBlockId)) {
+        onEvent({ kind: "incompatible", entry, reason: "missing-block" });
+        return;
+      }
+
+      try {
+        markAttempted(entry);
+        await putLessonProgress({
+          lessonSlug: entry.lessonSlug,
+          lessonVersion: entry.lessonVersion,
+          catalogHash: ctx.catalogHash,
+          lastBlockId: entry.lastBlockId,
+        });
+        clearPendingOperation(entry.id, entry.revision);
+        onEvent({ kind: "progress-synced", entry });
+      } catch (e) {
+        const latest = readProgressEntry(entryId);
+        if (latest && latest.revision !== entry.revision) continue;
+        onEvent({
+          kind: "retry-paused",
+          entry,
+          reason: e instanceof CatalogueMismatchError ? "mismatch" : "offline",
+        });
+        return;
+      }
+    }
+  } finally {
+    progressInflight.delete(entryId);
+  }
+}
+
 async function retryOne(entry: LearningOutboxEntry, ctx: LessonOutboxContext): Promise<RetryEvent | null> {
   const ownerUserId = currentLearnUserId();
   if (!ownerUserId || entry.ownerUserId !== ownerUserId) return null;
   if (entry.lessonSlug !== ctx.lessonSlug) return null;
+  if (entry.kind === "progress") {
+    await flushProgressOutbox(ctx, () => {});
+    return null;
+  }
   if (inflight.has(entry.id)) return null;
   if (entry.lessonVersion !== ctx.lessonVersion) {
     return { kind: "incompatible", entry, reason: "lesson-version-changed" };
   }
-  if (entry.kind === "progress" && !ctx.blockIds.includes(entry.lastBlockId)) {
-    return { kind: "incompatible", entry, reason: "missing-block" };
-  }
-  if (entry.kind === "checkpoint" && !checkpointMatches(entry, ctx)) {
+  if (!checkpointMatches(entry, ctx)) {
     return { kind: "incompatible", entry, reason: "invalid-checkpoint" };
   }
 
   inflight.add(entry.id);
   try {
     markAttempted(entry);
-    if (entry.kind === "progress") {
-      await putLessonProgress({
-        lessonSlug: entry.lessonSlug,
-        lessonVersion: entry.lessonVersion,
-        catalogHash: ctx.catalogHash,
-        lastBlockId: entry.lastBlockId,
-      });
-      clearPendingOperation(entry.id);
-      return { kind: "progress-synced", entry };
-    }
     const result = await postCheckpointAttempt({
       lessonSlug: entry.lessonSlug,
       lessonVersion: entry.lessonVersion,
@@ -343,7 +428,7 @@ async function retryOne(entry: LearningOutboxEntry, ctx: LessonOutboxContext): P
       responses: entry.responses,
       clientAttemptId: entry.clientAttemptId,
     });
-    clearPendingOperation(entry.id);
+    clearPendingOperation(entry.id, entry.revision);
     return { kind: "checkpoint-synced", entry, result };
   } catch (e) {
     return {
@@ -361,6 +446,10 @@ export async function retryLessonOutbox(
   onEvent: (event: RetryEvent) => void
 ): Promise<void> {
   for (const entry of readAllEntries()) {
+    if (entry.kind === "progress") {
+      await flushProgressOutbox(ctx, onEvent);
+      continue;
+    }
     const event = await retryOne(entry, ctx);
     if (event) onEvent(event);
   }
