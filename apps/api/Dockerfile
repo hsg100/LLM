@@ -23,6 +23,7 @@ COPY apps/api/ ./
 # grading catalogue exists only in this image — never in the web deployment.
 COPY curriculum/build/catalog.json         /curriculum/build/catalog.json
 COPY curriculum/build/catalog.grading.json /curriculum/build/catalog.grading.json
+ENV CURRICULUM_CATALOG_DIR=/curriculum/build
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
