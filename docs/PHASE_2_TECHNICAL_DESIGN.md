@@ -514,7 +514,20 @@ All checkpoint side-effects occur in **one transaction** with this shape:
 3. `SELECT … FROM curriculum_progress … FOR UPDATE` (create-if-absent, same
    pattern) and recompute `current_topic_slug` / completion inside the same
    transaction. Lock order is always lesson_progress → curriculum_progress,
-   making deadlock impossible between concurrent checkpoint transactions.
+   which reduces the known deadlock risk between concurrent checkpoint
+   transactions — it does **not** eliminate every PostgreSQL deadlock or
+   serialization interaction (final-approval condition 3).
+4. **Bounded transaction retry.** The whole checkpoint transaction (and the
+   progress-PUT write path) runs inside a retry wrapper that catches
+   PostgreSQL deadlock (`40P01`) and serialization-failure (`40001`) errors,
+   rolls back, sleeps a small jittered backoff, and retries up to **3**
+   times before surfacing a 503 with a retryable error body. The same
+   `client_attempt_id` is used on every retry, so idempotency semantics are
+   preserved: whichever iteration commits produces exactly one attempt row,
+   and a retry that lands after a competing commit takes the
+   `duplicate: true` path. A focused test must exercise the retry wrapper
+   (inject `40P01` on the first attempt; assert one successful commit, one
+   attempt row, and correct backoff/bounded behaviour).
 
 **Required concurrency tests** (DB-backed, following the repo's existing
 25-way concurrent job-events test idiom): (a) N parallel POSTs with the same
@@ -549,18 +562,17 @@ deploy order.**
 Protocol:
 
 - The web build embeds its catalogue's `source_tree_hash`; every progress/
-  checkpoint write carries it as `catalog_hash`. The api compares against its
-  own hash:
-  - **Hashes equal** → normal processing.
-  - **Hashes differ but** the referenced `(lesson_slug, lesson_version,
-    checkpoint/block ids)` all validate against the api's catalogue → the
-    write is **accepted** (a content-only edit that bumped no version is not
-    a semantic conflict).
-  - **Hashes differ and** the referenced slug/version/ids do **not** validate
-    → **`HTTP 409`** with body
+  checkpoint write carries it as `catalog_hash`. **The submitted hash must
+  exactly match the api's hash** (final-approval condition 1):
+  - **Hashes equal** → normal processing (slug/version/id validation still
+    applies; failures there are plain 422s).
+  - **Hashes differ** → **`HTTP 409`** with body
     `{"error": "catalogue_version_mismatch", "api_hash": …, "client_hash": …,
-    "api_curriculum_version": …}`. (Plain-422 remains for malformed requests
-    that fail regardless of skew.)
+    "api_curriculum_version": …}` for **both** the progress PUT and the
+    checkpoint POST, regardless of whether the referenced slugs/ids would
+    resolve. Resolvable references do not prove that question options,
+    grading semantics, block structure or meaning are identical across the
+    two deployments, so no "resolvable despite mismatch" write path exists.
 - **Client behaviour on 409:** checkpoint responses and the resume position
   are **preserved locally** (localStorage keyed by `client_attempt_id` /
   lesson slug) and resubmitted with backoff; the UI shows an honest
@@ -638,6 +650,21 @@ curriculum cannot merge" is itself tested, spec §5.5):
 7. Citations missing `id` or `url`; out-of-range `correct_index`;
    `pass_score` outside (0,1]; `active` topics with zero lessons.
 8. Raw HTML present in any lesson body (§3.2).
+9. **Semantic version discipline** (final-approval condition 2):
+   `curriculum-tools semver-check --base <merge-base catalogue>` compares the
+   proposed grading+public catalogues with the catalogues at the PR
+   merge-base and **fails when a semantic change occurs without the required
+   version bump**. Semantic changes enforced at minimum: checkpoint
+   questions, options, answer keys or pass thresholds; objectives; block IDs
+   or their order; topic/lesson membership (curriculum topic list, topic
+   lesson lists); completion requirements; and any other field that alters
+   progress or grading meaning (concept lists on lessons, lesson `topic`
+   reassignment). Version-neutral by documented policy: narrative block
+   *content* edits that preserve block IDs and order, and citation metadata
+   changes. The initial introduction of the catalogue is explicitly exempt
+   (no merge-base catalogue exists). CI passes the merge-base ref
+   (`git merge-base HEAD origin/main`); red-path validator tests must prove
+   that an unversioned semantic change of each enforced class fails.
 
 Backend pytest additions: catalogue-load and integrity tests (§6),
 progress/checkpoint contract tests (true idempotency per §9.1), the
