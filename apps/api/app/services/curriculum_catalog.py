@@ -44,8 +44,14 @@ def _candidate_dirs() -> list[Path]:
     s = get_settings()
     if s.curriculum_catalog_dir:
         return [Path(s.curriculum_catalog_dir)]
-    repo_root = Path(__file__).resolve().parents[4]  # app/services → app → api → apps → root
-    return [Path("/curriculum/build"), repo_root / "curriculum" / "build"]
+    candidates = [Path("/curriculum/build")]  # Docker image / dev ro-mount path
+    # Bare-metal dev/tests: app/services → app → api → apps → repo root. In
+    # the container the module lives at /app/app/services/... with too few
+    # ancestors, so the repo-root candidate simply doesn't exist there.
+    parents = Path(__file__).resolve().parents
+    if len(parents) > 4:
+        candidates.append(parents[4] / "curriculum" / "build")
+    return candidates
 
 
 @dataclass(frozen=True)
