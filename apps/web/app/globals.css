@@ -104,6 +104,13 @@ a:hover { text-decoration: underline; }
   outline-offset: 2px;
 }
 
+.fm-learn-card-link:focus-visible,
+.fm-action-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  text-decoration: none;
+}
+
 .fm-concept-popover {
   position: absolute;
   z-index: 40;

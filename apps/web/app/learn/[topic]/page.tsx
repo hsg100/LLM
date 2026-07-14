@@ -78,9 +78,11 @@ export default function TopicPage({ params }: { params: { topic: string } }) {
           <Link
             key={l.slug}
             href={`/learn/${topic.slug}/${l.slug}`}
+            className="fm-learn-card-link"
             style={{
-              all: "unset",
               cursor: "pointer",
+              color: "inherit",
+              textDecoration: "none",
               display: "flex",
               alignItems: "baseline",
               gap: 14,

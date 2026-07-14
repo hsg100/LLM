@@ -47,9 +47,11 @@ export default function LearnPage() {
           <Link
             key={t.slug}
             href={`/learn/${t.slug}`}
+            className="fm-learn-card-link"
             style={{
-              all: "unset",
               cursor: "pointer",
+              color: "inherit",
+              textDecoration: "none",
               display: "flex",
               alignItems: "baseline",
               gap: 14,
