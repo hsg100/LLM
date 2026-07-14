@@ -119,6 +119,34 @@ export async function apiPost<T>(path: string, body: any, init?: RequestInit, ti
   return r.json() as Promise<T>;
 }
 
+export async function apiPut<T>(path: string, body: any, init?: RequestInit, timeoutMs?: number): Promise<T> {
+  let r: Response;
+  const timeout = timeoutSignal(init, timeoutMs);
+  try {
+    r = await fetch(apiUrl(path), {
+      method: "PUT",
+      cache: "no-store",
+      ...init,
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
+      body: JSON.stringify(body),
+      signal: timeout.signal,
+    });
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new Error(`PUT ${path} → timed out after ${timeoutMs || DEFAULT_TIMEOUT_MS}ms`);
+    }
+    throw new Error(`PUT ${path} → network error: ${e?.message || e}`);
+  } finally {
+    timeout.cleanup();
+  }
+  if (!r.ok) {
+    if (r.status === 401) handleUnauthorized();
+    const errBody = await readErrorBody(r);
+    throw new Error(`PUT ${path} → ${r.status}${errBody ? ` — ${errBody}` : ""}`);
+  }
+  return r.json() as Promise<T>;
+}
+
 export async function apiDelete<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
   let r: Response;
   const timeout = timeoutSignal(init, timeoutMs);

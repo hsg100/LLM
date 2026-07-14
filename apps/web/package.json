@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:learn-bundle": "node scripts/check-learn-bundle.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.51.1",
@@ -15,7 +16,9 @@
     "lucide-react": "0.408.0",
     "next": "14.2.5",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "react-markdown": "^10.1.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
