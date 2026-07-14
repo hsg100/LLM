@@ -1,0 +1,715 @@
+{
+  "artifact_hash": "acaa366b1d346ae7f3cfbf959aea8e70f689ae1a6e40c153bf032cbd7de104d1",
+  "concepts": {
+    "attention": {
+      "name": "Attention",
+      "prerequisites": [
+        "embedding"
+      ],
+      "short_definition": "The mechanism by which each token selectively pulls information from other tokens, weighted by learned relevance.",
+      "slug": "attention"
+    },
+    "causal-mask": {
+      "name": "Causal mask",
+      "prerequisites": [
+        "attention"
+      ],
+      "short_definition": "The constraint that a token may only attend to earlier positions, so generation can't look at the future.",
+      "slug": "causal-mask"
+    },
+    "context-window": {
+      "name": "Context window",
+      "prerequisites": [
+        "token"
+      ],
+      "short_definition": "The maximum number of tokens a model can attend over in one pass.",
+      "slug": "context-window"
+    },
+    "embedding": {
+      "name": "Embedding",
+      "prerequisites": [
+        "token"
+      ],
+      "short_definition": "A learned vector of numbers that represents a token (or text) so that related meanings get nearby vectors.",
+      "slug": "embedding"
+    },
+    "next-token-prediction": {
+      "name": "Next-token prediction",
+      "prerequisites": [
+        "token"
+      ],
+      "short_definition": "The training objective of predicting the most likely next token given the preceding tokens.",
+      "slug": "next-token-prediction"
+    },
+    "probability-distribution": {
+      "name": "Next-token probability distribution",
+      "prerequisites": [
+        "next-token-prediction"
+      ],
+      "short_definition": "The model's output for one step — a probability for every token in the vocabulary of being next.",
+      "slug": "probability-distribution"
+    },
+    "query-key-value": {
+      "name": "Queries, keys and values",
+      "prerequisites": [
+        "attention"
+      ],
+      "short_definition": "The three learned projections of each token used by attention — what I'm looking for (query), what I contain (key), what I hand over (value).",
+      "slug": "query-key-value"
+    },
+    "sampling": {
+      "name": "Sampling",
+      "prerequisites": [
+        "probability-distribution"
+      ],
+      "short_definition": "The random draw that picks one concrete next token from the (possibly reshaped) distribution.",
+      "slug": "sampling"
+    },
+    "temperature": {
+      "name": "Temperature",
+      "prerequisites": [
+        "probability-distribution"
+      ],
+      "short_definition": "A sampling control that reshapes the next-token distribution — lower sharpens it toward the top choices, higher flattens it.",
+      "slug": "temperature"
+    },
+    "token": {
+      "name": "Token",
+      "prerequisites": [],
+      "short_definition": "The unit of text a language model actually reads and writes — often a word piece, not a whole word.",
+      "slug": "token"
+    },
+    "tokenizer": {
+      "name": "Tokenizer",
+      "prerequisites": [
+        "token"
+      ],
+      "short_definition": "The fixed procedure that splits text into tokens and maps each token to an integer ID.",
+      "slug": "tokenizer"
+    },
+    "top-p": {
+      "name": "Top-p (nucleus) sampling",
+      "prerequisites": [
+        "probability-distribution"
+      ],
+      "short_definition": "A sampling control that keeps only the smallest set of tokens whose probabilities sum to p, then samples within it.",
+      "slug": "top-p"
+    },
+    "vector-similarity": {
+      "name": "Vector similarity",
+      "prerequisites": [
+        "embedding"
+      ],
+      "short_definition": "A numeric measure (commonly cosine similarity) of how close two embedding vectors point.",
+      "slug": "vector-similarity"
+    }
+  },
+  "curriculum": {
+    "slug": "llm-pathway",
+    "title": "Understanding LLMs from first principles",
+    "topics": [
+      "what-language-models-do",
+      "tokens-and-tokenisation",
+      "embeddings-and-representation",
+      "neural-network-foundations",
+      "transformer-architecture",
+      "attention",
+      "training-and-next-token-prediction",
+      "inference-and-sampling"
+    ],
+    "version": 1
+  },
+  "format": 1,
+  "lessons": {
+    "attention-routing": {
+      "blocks": [
+        {
+          "heading": "The problem attention solves",
+          "id": "the-problem-attention-solves",
+          "markdown": "After embedding, each token is a vector that knows nothing about its\nneighbours. \"it\" means little until something connects it to \"the animal\".\n**Attention** is the mechanism that moves information between positions — and\ncrucially, *how much* moves is computed from the content itself, not fixed in\nadvance."
+        },
+        {
+          "heading": "Queries, keys and values",
+          "id": "queries-keys-and-values",
+          "markdown": "Each token's vector is projected three ways, and the names describe the\nroles:\n\n- **query** — what this token is looking for;\n- **key** — how this token advertises what it contains;\n- **value** — what this token actually hands over if selected.\n\nEvery query is compared against every key; well-matched pairs get high\nscores. The scores are normalised into weights that sum to 1, and each token\nreceives the weighted mixture of the values. Several **heads** run this in\nparallel, each free to learn a different routing pattern."
+        },
+        {
+          "heading": "Reading an attention matrix",
+          "id": "reading-an-attention-matrix",
+          "markdown": "Lay the sequence along both axes: each row is a receiving token, each entry\nthat row's weight on a sending token. A row concentrated on one column means\n\"this token pulled almost everything from there\"; a spread-out row means a\nbroad mixture. In \"…because it was too tired\", the row for \"it\" putting most\nof its weight on \"animal\" is the classic example of content-dependent\nrouting."
+        },
+        {
+          "heading": "Predict, then flip the mask",
+          "id": "predict-then-flip-the-mask",
+          "markdown": "The **causal mask** enforces generation order: position *n* may attend to\npositions 1…*n* and nothing later. Before toggling a mask in any\nvisualisation, predict what must change: every weight above the diagonal is\nforced to zero, and the last token — the one about to predict what comes\nnext — can see everything while influencing nothing behind it."
+        },
+        {
+          "heading": "What attention weights don't tell you",
+          "id": "what-attention-weights-don-t-tell-you",
+          "markdown": "A high weight shows that information flowed in a particular head. It does not\nshow *why*, and it is not a complete account of the model's reasoning —\ninformation also mixes through the feed-forward layers and across dozens of\nstacked blocks, and research (see the sources) cautions directly against\nreading attention maps as explanations. Treat them as one legible ingredient\nin a much larger computation."
+        }
+      ],
+      "checkpoint": {
+        "kind": "concept-check",
+        "pass_score": 0.8,
+        "questions": [
+          {
+            "concept": "attention",
+            "id": "q-role",
+            "options": [
+              "Compresses the vocabulary",
+              "Moves information between token positions, weighted by learned relevance",
+              "Decides which tokens to delete",
+              "Stores the training data for lookup"
+            ],
+            "prompt": "What does attention fundamentally do in a transformer?"
+          },
+          {
+            "concept": "query-key-value",
+            "id": "q-qkv",
+            "options": [
+              "What the token is looking for in other tokens",
+              "What the token hands over when selected",
+              "The token's position in the sequence",
+              "The token's dictionary form"
+            ],
+            "prompt": "In the query/key/value picture, what is a token's query?"
+          },
+          {
+            "concept": "causal-mask",
+            "id": "q-mask",
+            "options": [
+              "All tokens in the sequence",
+              "Positions 6 onward only",
+              "Positions 1–5 only",
+              "Only position 4"
+            ],
+            "prompt": "With causal masking, which tokens can position 5 attend to?"
+          },
+          {
+            "concept": "attention",
+            "id": "q-limits",
+            "options": [
+              "The model has fully resolved the pronoun, and this weight explains its reasoning",
+              "Information flowed from \"animal\" toward \"it\" in this head — one ingredient, not a complete explanation",
+              "The model will output \"animal\" next",
+              "Attention weights are meaningless"
+            ],
+            "prompt": "A head's attention weights point strongly from \"it\" to \"animal\". What is the safest conclusion?"
+          }
+        ],
+        "slug": "attention-checkpoint"
+      },
+      "concepts": [
+        "attention",
+        "query-key-value",
+        "causal-mask"
+      ],
+      "demo_fallbacks": {
+        "attention-explorer": "Example: in \"The animal didn't cross the street because it was too tired\", attention weights from the token \"it\" concentrate on \"animal\" rather than \"street\" — the model routes information from the likely referent. With causal masking, \"it\" can draw on every earlier token but on nothing after itself."
+      },
+      "demos": [
+        "attention-explorer"
+      ],
+      "duration_minutes": 12,
+      "objectives": [
+        "Explain queries, keys and values at an intuitive level",
+        "Interpret a simple attention-weight matrix",
+        "Predict how causal masking changes information flow"
+      ],
+      "slug": "attention-routing",
+      "sources": [
+        {
+          "id": "vaswani-2017-attention",
+          "title": "Attention Is All You Need",
+          "url": "https://arxiv.org/abs/1706.03762"
+        },
+        {
+          "id": "jain-2019-attention-not-explanation",
+          "title": "Attention is not Explanation (interpretation caveats)",
+          "url": "https://arxiv.org/abs/1902.10186"
+        }
+      ],
+      "title": "Attention as routing",
+      "topic": "attention",
+      "version": 1
+    },
+    "embedding-space": {
+      "blocks": [
+        {
+          "heading": "From IDs to meaning",
+          "id": "from-ids-to-meaning",
+          "markdown": "Token IDs are arbitrary — token 4091 is not \"bigger\" than token 517. The\nfirst thing a model does is replace each ID with its **embedding**: a learned\nvector of hundreds or thousands of numbers. These vectors are parameters,\ntuned during training so that tokens used in similar ways end up with\nsimilar vectors.\n\nNobody assigns the dimensions meanings. Whatever structure exists — and a lot\ndoes — was discovered by the training process, not designed."
+        },
+        {
+          "heading": "Similarity is geometry",
+          "id": "similarity-is-geometry",
+          "markdown": "Because meanings are now points in space, \"how related are these?\" becomes a\ngeometric question. The usual measure is **cosine similarity**: 1.0 for\nvectors pointing the same way, near 0 for unrelated ones.\n\nThe important intuition: similarity tracks *usage*, not spelling. \"cat\" and\n\"kitten\" score high; \"cat\" and \"car\" don't, one letter apart notwithstanding.\nWords with several senses (\"bank\") sit in compromise positions pulled toward\neach of their uses."
+        },
+        {
+          "heading": "Predict before you look",
+          "id": "predict-before-you-look",
+          "markdown": "Before checking similarities in any embedding tool, rank these pairs:\n(\"doctor\", \"nurse\"), (\"doctor\", \"document\"), (\"small\", \"tiny\"),\n(\"small\", \"large\"). The last pair is the interesting one — antonyms often\nscore *high*, because they appear in the same contexts. Similar usage is not\nthe same thing as similar meaning."
+        },
+        {
+          "heading": "The flat-map caveat",
+          "id": "the-flat-map-caveat",
+          "markdown": "Any picture of embedding space on a screen is a **projection** from hundreds\nof dimensions down to two. Projections must throw information away: points\nthat look close may be far apart in the real space, clusters can be artefacts\nof the projection method, and different runs of the same method can produce\ndifferent layouts. Treat 2D maps as sketches for intuition, never as ground\ntruth."
+        },
+        {
+          "heading": "Why this matters later",
+          "id": "why-this-matters-later",
+          "markdown": "Embeddings are the currency everything else trades in: attention decides how\nmuch information flows between tokens by comparing vectors derived from\nembeddings, and retrieval systems find \"relevant\" documents by nearest-vector\nsearch. If similarity-as-geometry makes sense, both of those will too."
+        }
+      ],
+      "checkpoint": {
+        "kind": "concept-check",
+        "pass_score": 0.8,
+        "questions": [
+          {
+            "concept": "embedding",
+            "id": "q-what",
+            "options": [
+              "A compressed copy of the training data",
+              "The token's dictionary definition",
+              "The token's position in the vocabulary, in binary",
+              "A learned vector of numbers representing the token"
+            ],
+            "prompt": "What is a token embedding?"
+          },
+          {
+            "concept": "vector-similarity",
+            "id": "q-similar",
+            "options": [
+              "They are spelled similarly",
+              "The model treats them as closely related in meaning or usage",
+              "They always appear together in text",
+              "They have the same number of tokens"
+            ],
+            "prompt": "Two words have cosine similarity 0.9 in an embedding model. What does that suggest?"
+          },
+          {
+            "concept": "embedding",
+            "id": "q-projection",
+            "options": [
+              "Little by itself — 2D plots are lossy projections of hundreds of dimensions",
+              "The words are unrelated in the model",
+              "The embedding model is broken",
+              "The words are in different languages"
+            ],
+            "prompt": "A 2D scatter-plot of embeddings shows two words far apart. What can you conclude?"
+          }
+        ],
+        "slug": "embeddings-checkpoint"
+      },
+      "concepts": [
+        "embedding",
+        "vector-similarity"
+      ],
+      "demo_fallbacks": {
+        "embedding-space-explorer": "Example similarities from a small embedding model: \"cat\" and \"kitten\" score around 0.85; \"cat\" and \"car\" around 0.4 despite differing by one letter; \"bank\" sits between \"river\" and \"money\", reflecting both of its senses. The numbers vary by model, but the pattern — similarity tracks meaning, not spelling — is the durable point."
+      },
+      "demos": [
+        "embedding-space-explorer"
+      ],
+      "duration_minutes": 10,
+      "objectives": [
+        "Explain what an embedding vector represents",
+        "Interpret cosine similarity between embeddings",
+        "Explain why 2D visualisations are projections of a much higher-dimensional space"
+      ],
+      "slug": "embedding-space",
+      "sources": [
+        {
+          "id": "mikolov-2013-word2vec",
+          "title": "Efficient Estimation of Word Representations in Vector Space",
+          "url": "https://arxiv.org/abs/1301.3781"
+        },
+        {
+          "id": "vaswani-2017-attention",
+          "title": "Attention Is All You Need (embeddings as transformer input)",
+          "url": "https://arxiv.org/abs/1706.03762"
+        }
+      ],
+      "title": "Embedding space",
+      "topic": "embeddings-and-representation",
+      "version": 1
+    },
+    "sampling-controls": {
+      "blocks": [
+        {
+          "heading": "Two steps, not one",
+          "id": "two-steps-not-one",
+          "markdown": "For each position the model produces a **probability distribution**: a score\nfor every token in its vocabulary as the possible next token. Then a separate\nstep — **sampling** — draws one concrete token from that distribution.\nKeeping these apart dissolves a lot of confusion: the distribution is\ndeterministic given the input; the draw is where randomness enters."
+        },
+        {
+          "heading": "Temperature reshapes the distribution",
+          "id": "temperature-reshapes-the-distribution",
+          "markdown": "**Temperature** divides the raw scores before they become probabilities.\nLow temperature exaggerates the gaps — probability piles onto the top few\ntokens, and output becomes near-deterministic. High temperature shrinks the\ngaps — the distribution flattens, and unlikely tokens win more often.\n\nPredict first: at temperature 0.1, how often does the second-most-likely\ntoken appear? Then reason it through — almost never, because sharpening has\npushed nearly all the mass onto the favourite."
+        },
+        {
+          "heading": "Top-p trims the tail",
+          "id": "top-p-trims-the-tail",
+          "markdown": "Language model vocabularies contain many thousands of tokens that are each\nindividually absurd but collectively carry real probability. **Top-p\n(nucleus) sampling** removes that tail: keep the smallest set of tokens whose\nprobabilities sum to *p*, renormalise, and sample within it. Unlike a fixed\ntop-k, the kept set adapts — narrow when the model is confident, wide when\nit genuinely isn't."
+        },
+        {
+          "heading": "Distribution changes vs draw changes",
+          "id": "distribution-changes-vs-draw-changes",
+          "markdown": "Run the same prompt many times and the *variation between runs* is the\nsampling draw. Change temperature or top-p and the *distribution itself*\nchanges. Both affect what you read, but they are different levers: one\ncontrols the menu, the other picks the meal. This is also why \"the model said\nX yesterday and Y today\" is usually a statement about sampling, not about the\nmodel changing."
+        },
+        {
+          "heading": "No universally right setting",
+          "id": "no-universally-right-setting",
+          "markdown": "Low temperature suits tasks with one correct answer; higher settings suit\nbrainstorming and variety. The classic failure modes sit at the extremes:\ngreedy decoding can loop and repeat, while very high temperature degenerates\ninto incoherence (the nucleus-sampling paper in the sources documents both)."
+        }
+      ],
+      "checkpoint": {
+        "kind": "concept-check",
+        "pass_score": 0.8,
+        "questions": [
+          {
+            "concept": "sampling",
+            "id": "q-two-steps",
+            "options": [
+              "Tokenising, then embedding",
+              "Computing a probability distribution, then sampling one token from it",
+              "Sampling, then checking grammar",
+              "Choosing temperature, then choosing top-p"
+            ],
+            "prompt": "What are the two distinct steps in producing the next token?"
+          },
+          {
+            "concept": "temperature",
+            "id": "q-temp",
+            "options": [
+              "more deterministic",
+              "shorter",
+              "more diverse, because the distribution is flattened before sampling",
+              "more accurate"
+            ],
+            "prompt": "Raising temperature from 0.7 to 1.4 makes outputs…"
+          },
+          {
+            "concept": "top-p",
+            "id": "q-topp",
+            "options": [
+              "Keeps only the 9 most likely tokens",
+              "Keeps the smallest set of tokens whose probabilities sum to 0.9, then samples within it",
+              "Multiplies every probability by 0.9",
+              "Stops generation at 90% of the context window"
+            ],
+            "prompt": "What does top-p = 0.9 do?"
+          },
+          {
+            "concept": "probability-distribution",
+            "id": "q-same-dist",
+            "options": [
+              "The model's weights changed between runs",
+              "The tokenizer is non-deterministic",
+              "Temperature drifts over time",
+              "Sampling is a random draw — the distribution was the same, the outcome wasn't"
+            ],
+            "prompt": "Two runs with identical settings give different outputs. Why?"
+          }
+        ],
+        "slug": "sampling-checkpoint"
+      },
+      "concepts": [
+        "probability-distribution",
+        "temperature",
+        "top-p",
+        "sampling"
+      ],
+      "demo_fallbacks": {
+        "sampling-lab": "Example: after \"The capital of France is\", the distribution might be \" Paris\" 0.92, \" the\" 0.03, \" located\" 0.01, with the rest spread thinly. At temperature 0.2, \" Paris\" is chosen almost every time; at temperature 1.5, alternatives win noticeably often; with top-p 0.9 the thin tail is removed before the draw."
+      },
+      "demos": [
+        "sampling-lab"
+      ],
+      "duration_minutes": 10,
+      "objectives": [
+        "Distinguish the model's probability distribution from the sampling step",
+        "Predict how temperature and top-p change output diversity"
+      ],
+      "slug": "sampling-controls",
+      "sources": [
+        {
+          "id": "holtzman-2020-nucleus",
+          "title": "The Curious Case of Neural Text Degeneration (nucleus sampling)",
+          "url": "https://arxiv.org/abs/1904.09751"
+        },
+        {
+          "id": "vaswani-2017-attention",
+          "title": "Attention Is All You Need (softmax output layer)",
+          "url": "https://arxiv.org/abs/1706.03762"
+        }
+      ],
+      "title": "Sampling controls",
+      "topic": "inference-and-sampling",
+      "version": 1
+    },
+    "tokens-and-tokenisers": {
+      "blocks": [
+        {
+          "heading": "Why models don't read words",
+          "id": "why-models-don-t-read-words",
+          "markdown": "A language model never sees your text the way you wrote it. Before anything\nelse happens, a **tokenizer** converts the text into a sequence of **tokens**\n— integer IDs drawn from a fixed vocabulary, typically a few tens of\nthousands of entries.\n\nWhole words would make the vocabulary enormous and leave every typo, name and\nnew word unrepresentable. Single characters would make sequences painfully\nlong. Sub-word tokens are the compromise: common words get one token,\neverything else is assembled from reusable pieces."
+        },
+        {
+          "heading": "How text gets split",
+          "id": "how-text-gets-split",
+          "markdown": "Most modern tokenizers are trained with byte-pair-encoding-style algorithms:\nstarting from characters (or bytes), the most frequent adjacent pairs are\nmerged repeatedly until the vocabulary budget is reached. The result is a\ndeterministic splitting procedure, fixed per model family.\n\nPractical intuitions that follow:\n\n- frequent English words → usually one token, often with the leading space\n  attached (\"` prices`\");\n- rare words, names and other languages → several fragments (\"`Rey`\", \"`kj`\",\n  \"`avik`\");\n- numbers and punctuation split in sometimes surprising ways — \"1234\" may not\n  be one token;\n- emoji and unusual Unicode may cost several tokens each."
+        },
+        {
+          "heading": "Predict before you test",
+          "id": "predict-before-you-test",
+          "markdown": "Take a sentence you'd actually write and, before running any tokenizer over\nit, guess: how many tokens? Which words split? Rare names and long compound\nwords are where guesses usually go wrong — which is exactly the intuition\nworth training."
+        },
+        {
+          "heading": "Tokens are the budget",
+          "id": "tokens-are-the-budget",
+          "markdown": "Everything the model does is counted in tokens, not characters or words. The\n**context window** — the maximum the model can consider at once — is a token\nbudget. API pricing is per token. When a long conversation \"forgets\" its\nbeginning, that is the token budget being exceeded, not the model choosing to\nforget."
+        },
+        {
+          "heading": "What this does not mean",
+          "id": "what-this-does-not-mean",
+          "markdown": "One tokenizer's behaviour is not tokenisation in general: the same text\nsplits differently under different model families. And a token is not a unit\nof meaning — the model learns meaning in later layers; the tokenizer is just\na fixed, mechanical compression scheme."
+        }
+      ],
+      "checkpoint": {
+        "kind": "concept-check",
+        "pass_score": 0.8,
+        "questions": [
+          {
+            "concept": "token",
+            "id": "q-unit",
+            "options": [
+              "Whole words, exactly as written",
+              "Tokens, which are often pieces of words",
+              "Individual letters only",
+              "Complete sentences"
+            ],
+            "prompt": "What unit of text does a large language model actually process?"
+          },
+          {
+            "concept": "tokenizer",
+            "id": "q-rare",
+            "options": [
+              "dropped by the model",
+              "stored as one special token",
+              "split into several smaller tokens",
+              "converted to its dictionary definition"
+            ],
+            "prompt": "A rare word like \"Reykjavik\" will most likely be…"
+          },
+          {
+            "concept": "context-window",
+            "id": "q-cost",
+            "options": [
+              "They determine the model's accuracy",
+              "More tokens always mean better answers",
+              "Tokens control the model's temperature",
+              "Context limits and API pricing are measured in tokens"
+            ],
+            "prompt": "Why do token counts matter practically?"
+          },
+          {
+            "concept": "tokenizer",
+            "id": "q-fixed",
+            "options": [
+              "Yes, there is one universal tokenizer",
+              "No — each model family fixes its own tokenizer, so the same text can split differently",
+              "Tokenisation is chosen randomly at inference time",
+              "Only the vocabulary size differs, never the splits"
+            ],
+            "prompt": "Is tokenisation the same across all models?"
+          }
+        ],
+        "slug": "tokens-checkpoint"
+      },
+      "concepts": [
+        "token",
+        "tokenizer",
+        "context-window"
+      ],
+      "demo_fallbacks": {
+        "tokenization-lab": "Example: the sentence \"Unbelievable prices in Reykjavik!\" might split into the tokens \"Un\", \"believ\", \"able\", \" prices\", \" in\", \" Rey\", \"kj\", \"avik\", \"!\". Common words become single tokens; rare words and names split into several pieces; the space is usually attached to the start of a token."
+      },
+      "demos": [
+        "tokenization-lab"
+      ],
+      "duration_minutes": 10,
+      "objectives": [
+        "Explain why models operate on tokens rather than characters or words",
+        "Predict roughly how a tokenizer will split unfamiliar text",
+        "Connect token counts to context limits and cost"
+      ],
+      "slug": "tokens-and-tokenisers",
+      "sources": [
+        {
+          "id": "sennrich-2016-bpe",
+          "title": "Neural Machine Translation of Rare Words with Subword Units (BPE)",
+          "url": "https://arxiv.org/abs/1508.07909"
+        },
+        {
+          "id": "openai-tokenizer-docs",
+          "title": "Interactive tokenizer reference",
+          "url": "https://platform.openai.com/tokenizer"
+        }
+      ],
+      "title": "Tokens and tokenisers",
+      "topic": "tokens-and-tokenisation",
+      "version": 1
+    }
+  },
+  "source_tree_hash": "e4fadcab09e8f15c3f878d8c331bcf0167a92af26763220d1c9cf15c3f719130",
+  "topics": {
+    "attention": {
+      "concepts": [
+        "attention",
+        "query-key-value",
+        "causal-mask"
+      ],
+      "learning_objectives": [
+        "Explain queries, keys and values at an intuitive level",
+        "Interpret a simple attention-weight matrix",
+        "Predict how causal masking changes information flow"
+      ],
+      "lessons": [
+        "attention-routing"
+      ],
+      "prerequisites": [
+        "embeddings-and-representation"
+      ],
+      "slug": "attention",
+      "status": "active",
+      "summary": "Content-dependent routing of information between tokens.",
+      "title": "Attention"
+    },
+    "embeddings-and-representation": {
+      "concepts": [
+        "embedding",
+        "vector-similarity"
+      ],
+      "learning_objectives": [
+        "Explain what an embedding vector represents",
+        "Interpret cosine similarity between embeddings",
+        "Explain why 2D visualisations of embeddings are projections, not the real geometry"
+      ],
+      "lessons": [
+        "embedding-space"
+      ],
+      "prerequisites": [
+        "tokens-and-tokenisation"
+      ],
+      "slug": "embeddings-and-representation",
+      "status": "active",
+      "summary": "Meaning as geometry — vectors, similarity, projection caveats.",
+      "title": "Embeddings and representation"
+    },
+    "inference-and-sampling": {
+      "concepts": [
+        "probability-distribution",
+        "temperature",
+        "top-p",
+        "sampling"
+      ],
+      "learning_objectives": [
+        "Distinguish the model's probability distribution from the sampling step",
+        "Predict how temperature and top-p change output diversity"
+      ],
+      "lessons": [
+        "sampling-controls"
+      ],
+      "prerequisites": [
+        "attention"
+      ],
+      "slug": "inference-and-sampling",
+      "status": "active",
+      "summary": "Temperature, top-p and where model outputs come from.",
+      "title": "Inference and sampling"
+    },
+    "neural-network-foundations": {
+      "concepts": [],
+      "learning_objectives": [
+        "Describe how layers of weighted sums and nonlinearities transform representations"
+      ],
+      "lessons": [],
+      "prerequisites": [
+        "embeddings-and-representation"
+      ],
+      "slug": "neural-network-foundations",
+      "status": "planned",
+      "summary": "The minimum you need: layers, weights, training signal.",
+      "title": "Neural-network foundations"
+    },
+    "tokens-and-tokenisation": {
+      "concepts": [
+        "token",
+        "tokenizer",
+        "context-window"
+      ],
+      "learning_objectives": [
+        "Explain why models operate on tokens rather than characters or words",
+        "Predict roughly how a tokenizer will split unfamiliar text",
+        "Connect token counts to context limits and cost"
+      ],
+      "lessons": [
+        "tokens-and-tokenisers"
+      ],
+      "prerequisites": [
+        "what-language-models-do"
+      ],
+      "slug": "tokens-and-tokenisation",
+      "status": "active",
+      "summary": "How text becomes model input, and what that costs.",
+      "title": "Tokens and tokenisation"
+    },
+    "training-and-next-token-prediction": {
+      "concepts": [
+        "next-token-prediction"
+      ],
+      "learning_objectives": [
+        "Explain what the pre-training objective optimises and what it does not"
+      ],
+      "lessons": [],
+      "prerequisites": [
+        "transformer-architecture"
+      ],
+      "slug": "training-and-next-token-prediction",
+      "status": "planned",
+      "summary": "Loss, gradients and what pre-training optimises.",
+      "title": "Training and next-token prediction"
+    },
+    "transformer-architecture": {
+      "concepts": [],
+      "learning_objectives": [
+        "Identify the components of a transformer block and how they compose"
+      ],
+      "lessons": [],
+      "prerequisites": [
+        "neural-network-foundations",
+        "embeddings-and-representation"
+      ],
+      "slug": "transformer-architecture",
+      "status": "planned",
+      "summary": "The block structure that everything else plugs into.",
+      "title": "Transformer architecture"
+    },
+    "what-language-models-do": {
+      "concepts": [
+        "next-token-prediction"
+      ],
+      "learning_objectives": [
+        "Describe a language model as a next-token predictor",
+        "Distinguish capability claims from mechanism claims"
+      ],
+      "lessons": [],
+      "prerequisites": [],
+      "slug": "what-language-models-do",
+      "status": "planned",
+      "summary": "Next-token prediction, capabilities and limits.",
+      "title": "What language models do"
+    }
+  }
+}

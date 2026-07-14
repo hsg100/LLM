@@ -13,6 +13,10 @@ node_modules/
 out/
 dist/
 build/
+# The compiled curriculum catalogue is a committed, drift-gated artifact
+# (docs/PHASE_2_TECHNICAL_DESIGN.md §2) — re-include it despite `build/`.
+!curriculum/build/
+!curriculum/build/**
 *.tsbuildinfo
 
 *.log
