@@ -483,3 +483,83 @@ class PaperGraphNode(BaseModel):
 class PaperGraphOut(BaseModel):
     nodes: list[PaperGraphNode] = Field(default_factory=list)
     edges: list[PaperRelationshipOut] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Learning progress (Phase 2 — docs/PHASE_2_TECHNICAL_DESIGN.md §9)
+# ---------------------------------------------------------------------------
+class CatalogueInfoOut(BaseModel):
+    curriculum_slug: str
+    curriculum_version: int
+    catalog_hash: str
+
+
+class LessonProgressPutIn(BaseModel):
+    lesson_version: int
+    catalog_hash: str
+    last_block_id: Optional[str] = None
+    # No `status` field by design: completion is exclusively server-controlled
+    # through checkpoint success.
+
+
+class LessonProgressOut(BaseModel):
+    lesson_slug: str
+    lesson_version: int
+    status: str
+    last_block_id: Optional[str] = None
+    best_checkpoint_score: Optional[float] = None
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    updated_at: datetime
+
+
+class LessonProgressPutOut(BaseModel):
+    changed: bool
+    progress: LessonProgressOut
+
+
+class CurriculumProgressOut(BaseModel):
+    curriculum_slug: str
+    curriculum_version: int
+    status: str
+    current_topic_slug: Optional[str] = None
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    updated_at: datetime
+
+
+class CheckpointAttemptOut(BaseModel):
+    lesson_slug: str
+    lesson_version: int
+    checkpoint_slug: str
+    score: float
+    passed: bool
+    created_at: datetime
+
+
+class LearnProgressOut(BaseModel):
+    curriculum_slug: str
+    curriculum_version: int
+    catalog_hash: str
+    curriculum: list[CurriculumProgressOut] = Field(default_factory=list)
+    lessons: list[LessonProgressOut] = Field(default_factory=list)
+    recent_attempts: list[CheckpointAttemptOut] = Field(default_factory=list)
+
+
+class CheckpointAttemptIn(BaseModel):
+    lesson_version: int
+    checkpoint_slug: str
+    catalog_hash: str
+    responses: dict[str, int]
+    client_attempt_id: str = Field(min_length=1, max_length=128)
+
+
+class CheckpointResultOut(BaseModel):
+    duplicate: bool
+    score: float
+    passed: bool
+    per_question: dict[str, Any] = Field(default_factory=dict)
+    best_checkpoint_score: Optional[float] = None
+    lesson_status: Optional[str] = None
+    attempt_id: str
+    created_at: datetime

@@ -923,3 +923,116 @@ def _normalise_job_event(ev: dict[str, Any]) -> dict[str, Any]:
         "message": ev.get("message") or "",
         "meta": ev.get("meta") or {},
     }
+
+
+# ---------------------------------------------------------------------------
+# Learning progress (Phase 2 — docs/PHASE_2_TECHNICAL_DESIGN.md §9).
+# Curriculum *content* has no API: it ships inside the web bundle. These
+# routes serve learner state only, validated against the api's catalogue.
+# ---------------------------------------------------------------------------
+from sqlalchemy.exc import DBAPIError as _DBAPIError  # noqa: E402
+
+from app.models import User as _User  # noqa: E402
+from app.schemas import (  # noqa: E402
+    CatalogueInfoOut,
+    CheckpointAttemptIn,
+    CheckpointResultOut,
+    LearnProgressOut,
+    LessonProgressPutIn,
+    LessonProgressPutOut,
+)
+from app.services.curriculum_catalog import CatalogIntegrityError, get_catalog  # noqa: E402
+from app.services.learning_progress import (  # noqa: E402
+    CatalogueMismatch,
+    LearnValidationError,
+    get_learn_progress,
+    put_lesson_progress,
+    record_checkpoint_attempt,
+)
+
+
+def _catalog_or_503():
+    try:
+        return get_catalog()
+    except CatalogIntegrityError as e:
+        raise HTTPException(503, f"curriculum catalogue unavailable: {e}")
+
+
+def _learn_write_errors(fn):
+    """Translate service exceptions to the HTTP contract (409/422/503)."""
+    try:
+        return fn()
+    except CatalogueMismatch as e:
+        raise HTTPException(
+            409,
+            {
+                "error": "catalogue_version_mismatch",
+                "api_hash": e.api_hash,
+                "client_hash": e.client_hash,
+                "api_curriculum_version": get_catalog().curriculum["version"],
+            },
+        )
+    except LearnValidationError as e:
+        raise HTTPException(422, str(e))
+    except _DBAPIError:
+        raise HTTPException(503, "transient database contention — retry the request")
+
+
+@router.get("/learn/catalogue-info", response_model=CatalogueInfoOut)
+def learn_catalogue_info() -> CatalogueInfoOut:
+    c = _catalog_or_503()
+    return CatalogueInfoOut(
+        curriculum_slug=c.curriculum["slug"],
+        curriculum_version=c.curriculum["version"],
+        catalog_hash=c.source_tree_hash,
+    )
+
+
+@router.get("/learn/progress", response_model=LearnProgressOut)
+def learn_progress(
+    user: _User = Depends(get_current_user), s: Session = Depends(get_session)
+) -> LearnProgressOut:
+    _catalog_or_503()
+    return LearnProgressOut(**get_learn_progress(s, user_id=user.id))
+
+
+@router.put("/learn/lessons/{lesson_slug}/progress", response_model=LessonProgressPutOut)
+def learn_put_lesson_progress(
+    lesson_slug: str,
+    body: LessonProgressPutIn,
+    user: _User = Depends(get_current_user),
+) -> LessonProgressPutOut:
+    _catalog_or_503()
+    result = _learn_write_errors(
+        lambda: put_lesson_progress(
+            user_id=user.id,
+            lesson_slug=lesson_slug,
+            lesson_version=body.lesson_version,
+            catalog_hash=body.catalog_hash,
+            last_block_id=body.last_block_id,
+        )
+    )
+    return LessonProgressPutOut(**result)
+
+
+@router.post(
+    "/learn/lessons/{lesson_slug}/checkpoint-attempts", response_model=CheckpointResultOut
+)
+def learn_checkpoint_attempt(
+    lesson_slug: str,
+    body: CheckpointAttemptIn,
+    user: _User = Depends(get_current_user),
+) -> CheckpointResultOut:
+    _catalog_or_503()
+    result = _learn_write_errors(
+        lambda: record_checkpoint_attempt(
+            user_id=user.id,
+            lesson_slug=lesson_slug,
+            lesson_version=body.lesson_version,
+            checkpoint_slug=body.checkpoint_slug,
+            catalog_hash=body.catalog_hash,
+            responses=body.responses,
+            client_attempt_id=body.client_attempt_id,
+        )
+    )
+    return CheckpointResultOut(**result)

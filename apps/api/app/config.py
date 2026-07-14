@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     obsidian_export_author_name: str = "FieldMap Bot"
     obsidian_export_author_email: str = "fieldmap@local"
 
+    # Directory holding the compiled curriculum artifacts (catalog.json +
+    # catalog.grading.json). Empty = auto-discover: /curriculum/build (Docker)
+    # then <repo-root>/curriculum/build (bare-metal dev/tests).
+    curriculum_catalog_dir: str = ""
+
     max_papers_per_landscape: int = 50
     max_pdf_mb: int = 50
     pdf_storage_dir: str = "/data/pdfs"

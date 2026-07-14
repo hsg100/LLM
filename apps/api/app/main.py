@@ -190,7 +190,17 @@ def ready(response: Response) -> dict[str, object]:
         out["migrations"] = "ok" if current == head else "stale"
     except Exception as e:  # noqa: BLE001
         out["migrations"] = f"error: {type(e).__name__}: {str(e)[:160]}"
-    if out.get("db") != "ok" or out.get("redis") != "ok" or out.get("migrations") != "ok":
+    # Curriculum catalogue (Phase 2): baked into the image/mount; a missing or
+    # corrupted catalogue breaks the Learn write APIs, so it gates readiness.
+    from app.services.curriculum_catalog import catalog_status
+
+    out.update(catalog_status())
+    if (
+        out.get("db") != "ok"
+        or out.get("redis") != "ok"
+        or out.get("migrations") != "ok"
+        or out.get("curriculum") != "ok"
+    ):
         response.status_code = 503
     return out
 
