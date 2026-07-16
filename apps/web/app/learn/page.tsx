@@ -19,8 +19,8 @@ export default function LearnPage() {
 
   return (
     <div
-      className="fm-page"
-      style={{ maxWidth: 960, margin: "0 auto", padding: "32px 40px 72px", animation: "fm-fade .3s ease" }}
+      className="fm-page fm-learn-page"
+      style={{ maxWidth: 960, margin: "0 auto", padding: "32px 40px 72px" }}
     >
       <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em", margin: "0 0 7px" }}>
         {curriculum.title}

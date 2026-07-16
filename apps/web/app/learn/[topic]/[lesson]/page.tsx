@@ -33,8 +33,8 @@ export default function LessonPage({ params }: { params: { topic: string; lesson
 
   return (
     <div
-      className="fm-page"
-      style={{ maxWidth: 760, margin: "0 auto", padding: "32px 40px 72px", animation: "fm-fade .3s ease" }}
+      className="fm-page fm-learn-page"
+      style={{ maxWidth: 760, margin: "0 auto", padding: "32px 40px 72px" }}
     >
       <div className="font-mono" style={{ fontSize: 10, color: "var(--t4)", letterSpacing: "0.14em", marginBottom: 8 }}>
         <Link href="/learn" style={{ color: "var(--t4)", textDecoration: "none" }}>

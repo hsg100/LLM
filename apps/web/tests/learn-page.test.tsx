@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -117,5 +119,29 @@ describe("Lesson route (/learn/[topic]/[lesson])", () => {
     expect(() =>
       wrap(<LessonPage params={{ topic: "attention", lesson: "sampling-controls" }} />)
     ).toThrow("NEXT_NOT_FOUND");
+  });
+});
+
+
+describe("Learn reduced-motion contract", () => {
+  it("uses the motion-safe Learn page class on every route and disables it for reduced motion", () => {
+    const routes = [
+      <LearnPage key="learn" />,
+      <TopicPage key="topic" params={{ topic: "attention" }} />,
+      <LessonPage key="lesson" params={{ topic: "attention", lesson: "attention-routing" }} />,
+    ];
+
+    for (const route of routes) {
+      const view = wrap(route);
+      expect(view.container.firstElementChild).toHaveClass("fm-learn-page");
+      expect(view.container.firstElementChild).not.toHaveStyle({ animation: "fm-fade .3s ease" });
+      view.unmount();
+    }
+
+    const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
+    expect(css).toMatch(/\.fm-learn-page\s*\{\s*animation:\s*fm-fade \.3s ease;\s*\}/);
+    expect(css).toMatch(
+      /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.fm-learn-page\s*\{\s*animation:\s*none;\s*\}/
+    );
   });
 });

@@ -182,10 +182,15 @@ a:hover { text-decoration: underline; }
 @keyframes fm-blink  { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
 
 .fm-fade   { animation: fm-fade .3s ease; }
+.fm-learn-page { animation: fm-fade .3s ease; }
 .fm-fadein { animation: fm-fadein .4s ease; }
 .fm-spin   { animation: fm-spin 1s linear infinite; }
 .fm-pulse  { animation: fm-pulse 1.4s ease-in-out infinite; }
 .fm-blink  { animation: fm-blink 1.4s infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fm-learn-page { animation: none; }
+}
 
 /* Several route components use inline display styles alongside Tailwind's
    responsive visibility classes. These ensure the visibility utilities win. */
