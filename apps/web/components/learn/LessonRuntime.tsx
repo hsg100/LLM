@@ -15,19 +15,28 @@
 //    preserves the attempt locally and retries — nothing is silently lost.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { onAuthChange } from "../../lib/auth";
 import { useQuery } from "@tanstack/react-query";
 import {
   CatalogueMismatchError,
   CheckpointResult,
+  clearCurrentUserLearningOutbox,
   clearPendingOperation,
+  currentLearnUserId,
   flushProgressOutbox,
   getLearnProgress,
   postCheckpointAttempt,
+  readCurrentUserLearningOutbox,
   retryLessonOutbox,
   savePendingCheckpoint,
   savePendingProgress,
 } from "../../lib/learn";
-import type { RetryEvent } from "../../lib/learn";
+import type {
+  CheckpointAttemptPayload,
+  LearningOutboxEntry,
+  RetryEvent,
+  StorageFailureReason,
+} from "../../lib/learn";
 
 export type RuntimeProps = {
   lessonSlug: string;
@@ -37,6 +46,24 @@ export type RuntimeProps = {
   checkpointSlug: string;
   passScore: number;
   questions: { id: string; prompt: string; options: string[] }[];
+};
+
+type UnsavedOperation =
+  | {
+      kind: "progress";
+      payload: {
+        lessonSlug: string;
+        lessonVersion: number;
+        catalogHash: string;
+        lastBlockId: string;
+      };
+    }
+  | { kind: "checkpoint"; payload: CheckpointAttemptPayload };
+
+type RecoveryState = {
+  ownerUserId: string;
+  reason: StorageFailureReason;
+  operation: UnsavedOperation;
 };
 
 function newAttemptId(): string {
@@ -62,6 +89,7 @@ function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: R
   const [syncState, setSyncState] = useState<
     "idle" | "mismatch" | "offline" | "storage" | "incompatible"
   >("idle");
+  const [recovery, setRecovery] = useState<RecoveryState | null>(null);
   const furthest = useRef<number>(-1);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retrying = useRef(false);
@@ -96,11 +124,21 @@ function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: R
     (blockId: string) => {
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
-        const saved = savePendingProgress({ lessonSlug, lessonVersion, catalogHash, lastBlockId: blockId });
+        const operation = { lessonSlug, lessonVersion, catalogHash, lastBlockId: blockId };
+        const saved = savePendingProgress(operation);
         if (!saved.ok) {
           setSyncState("storage");
+          const ownerUserId = currentLearnUserId();
+          if (ownerUserId && saved.reason !== "no_current_user") {
+            setRecovery({
+              ownerUserId,
+              reason: saved.reason,
+              operation: { kind: "progress", payload: operation },
+            });
+          }
           return;
         }
+        setRecovery(null);
         flushProgressOutbox(
           { lessonSlug, lessonVersion, catalogHash, blockIds, checkpointSlug: "", questions: [] },
           handleProgressEvent
@@ -175,10 +213,14 @@ function ProgressTracker({ lessonSlug, lessonVersion, catalogHash, blockIds }: R
         <Note>Reading position saved on this device — the API can&apos;t be reached yet.</Note>
       )}
       {syncState === "storage" && (
-        <Note tone="warn">
-          Automatic local saving is unavailable in this browser, so your reading position could
-          not be safely retained.
-        </Note>
+        recovery ? (
+          <PendingWorkRecovery recovery={recovery} />
+        ) : (
+          <Note tone="warn">
+            Automatic local saving is unavailable in this browser, so this reading position was
+            not saved or submitted.
+          </Note>
+        )
       )}
       {syncState === "incompatible" && (
         <Note tone="warn">
@@ -205,6 +247,7 @@ function Checkpoint({
   const [state, setState] = useState<
     "idle" | "submitting" | "mismatch" | "error" | "storage" | "changed" | "invalid"
   >("idle");
+  const [recovery, setRecovery] = useState<RecoveryState | null>(null);
   const retrying = useRef(false);
   const complete = useMemo(
     () => questions.every((q) => answers[q.id] !== undefined),
@@ -253,8 +296,17 @@ function Checkpoint({
     const saved = savePendingCheckpoint(attempt);
     if (!saved.ok) {
       setState("storage");
+      const ownerUserId = currentLearnUserId();
+      if (ownerUserId && saved.reason !== "no_current_user") {
+        setRecovery({
+          ownerUserId,
+          reason: saved.reason,
+          operation: { kind: "checkpoint", payload: attempt },
+        });
+      }
       return;
     }
+    setRecovery(null);
     try {
       const r = await postCheckpointAttempt(attempt);
       clearPendingOperation(saved.entry.id, saved.entry.revision);
@@ -404,10 +456,14 @@ function Checkpoint({
         </Note>
       )}
       {state === "storage" && (
-        <Note tone="warn">
-          Automatic local saving is unavailable in this browser, so your checkpoint answers were
-          not submitted. Enable storage or try from another browser before retaking.
-        </Note>
+        recovery ? (
+          <PendingWorkRecovery recovery={recovery} />
+        ) : (
+          <Note tone="warn">
+            Automatic local saving is unavailable in this browser, so this checkpoint attempt was
+            not saved or submitted.
+          </Note>
+        )
       )}
       {state === "changed" && (
         <Note tone="warn">
@@ -422,6 +478,147 @@ function Checkpoint({
         </Note>
       )}
     </section>
+  );
+}
+
+function PendingWorkRecovery({ recovery }: { recovery: RecoveryState }) {
+  const [activeUserId, setActiveUserId] = useState(() => currentLearnUserId());
+  const [pending, setPending] = useState<LearningOutboxEntry[]>(() =>
+    currentLearnUserId() === recovery.ownerUserId ? readCurrentUserLearningOutbox() : []
+  );
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  useEffect(
+    () =>
+      onAuthChange(() => {
+        const nextUserId = currentLearnUserId();
+        setActiveUserId(nextUserId);
+        setPending(
+          nextUserId === recovery.ownerUserId ? readCurrentUserLearningOutbox() : []
+        );
+        setConfirmingClear(false);
+        setStatus(null);
+      }),
+    [recovery.ownerUserId]
+  );
+
+  if (activeUserId !== recovery.ownerUserId) {
+    return (
+      <Note tone="warn">
+        Recovery data is hidden because the signed-in account changed. Return to the original
+        account to view or manage its pending work.
+      </Note>
+    );
+  }
+
+  const operationLabel = recovery.operation.kind === "checkpoint" ? "checkpoint attempt" : "reading position";
+  const recoveryData = JSON.stringify(
+    {
+      format: "fieldmap-learning-recovery-v1",
+      owner_user_id: recovery.ownerUserId,
+      unsaved_operation: recovery.operation,
+      pending_operations: pending,
+    },
+    null,
+    2
+  );
+
+  async function copyRecoveryData() {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(recoveryData);
+      setStatus("Recovery data copied.");
+    } catch {
+      setStatus("Copy is unavailable; select the recovery data above and copy it manually.");
+    }
+  }
+
+  function confirmClear() {
+    if (currentLearnUserId() !== recovery.ownerUserId) {
+      setStatus("The account changed, so no pending work was cleared.");
+      setConfirmingClear(false);
+      return;
+    }
+    const cleared = clearCurrentUserLearningOutbox();
+    if (!cleared.ok) {
+      setStatus("Pending work could not be cleared. It remains stored.");
+      return;
+    }
+    setPending(readCurrentUserLearningOutbox());
+    setConfirmingClear(false);
+    setStatus(
+      cleared.cleared === 0
+        ? "There was no stored pending work to clear."
+        : "Stored pending work was cleared. The unsaved operation above remains available to copy."
+    );
+  }
+
+  return (
+    <div
+      role="alert"
+      style={{
+        marginTop: 8,
+        padding: "10px 12px",
+        borderRadius: 8,
+        background: "var(--accent-bg)",
+        color: "var(--accent-ink)",
+        fontSize: 12,
+        lineHeight: 1.5,
+      }}
+    >
+      <strong>
+        {recovery.reason === "storage_capacity"
+          ? "Browser storage is full."
+          : "Automatic local saving is unavailable."}
+      </strong>{" "}
+      This new {operationLabel} was not saved or submitted. Existing pending work was left
+      unchanged. Copy the recovery data before clearing anything or moving to another browser.
+      <textarea
+        aria-label="Learning recovery data"
+        readOnly
+        value={recoveryData}
+        rows={6}
+        style={{
+          display: "block",
+          width: "100%",
+          boxSizing: "border-box",
+          marginTop: 8,
+          resize: "vertical",
+          fontFamily: "var(--font-mono)",
+          fontSize: 10.5,
+        }}
+      />
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+        <button className="fm-action-button" type="button" onClick={copyRecoveryData}>
+          Copy recovery data
+        </button>
+        {pending.length > 0 && !confirmingClear && (
+          <button
+            className="fm-action-button"
+            type="button"
+            onClick={() => setConfirmingClear(true)}
+          >
+            Clear {pending.length} saved pending {pending.length === 1 ? "write" : "writes"}
+          </button>
+        )}
+        {pending.length > 0 && confirmingClear && (
+          <>
+            <button className="fm-action-button" type="button" onClick={confirmClear}>
+              Confirm clear {pending.length}
+            </button>
+            <button
+              className="fm-action-button"
+              type="button"
+              onClick={() => setConfirmingClear(false)}
+            >
+              Keep pending work
+            </button>
+          </>
+        )}
+      </div>
+      {status && <div aria-live="polite" style={{ marginTop: 6 }}>{status}</div>}
+    </div>
   );
 }
 

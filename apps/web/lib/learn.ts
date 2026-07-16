@@ -48,10 +48,15 @@ export class CatalogueMismatchError extends Error {
 }
 
 export class StorageUnavailableError extends Error {
-  constructor() {
+  reason: StorageFailureReason;
+
+  constructor(reason: StorageFailureReason = "storage_unavailable") {
     super("learn_storage_unavailable");
+    this.reason = reason;
   }
 }
+
+export type StorageFailureReason = "storage_unavailable" | "storage_capacity";
 
 function isMismatch(e: unknown): boolean {
   return e instanceof Error && e.message.includes("catalogue_version_mismatch");
@@ -108,8 +113,6 @@ export async function postCheckpointAttempt(a: CheckpointAttemptPayload): Promis
 
 // ---- User-scoped write-ahead outbox for unsynchronised learning writes ----
 const OUTBOX_KEY = "fm-learn-outbox-v2";
-const MAX_OUTBOX_ENTRIES = 50;
-const RETENTION_MS = 1000 * 60 * 60 * 24 * 21;
 const inflight = new Set<string>();
 const progressInflight = new Set<string>();
 let revisionCounter = 0;
@@ -142,7 +145,11 @@ export type LearningOutboxEntry = PendingProgress | PendingCheckpoint;
 
 export type StorageResult<T> =
   | { ok: true; entry: T }
-  | { ok: false; reason: "no_current_user" | "storage_unavailable" };
+  | { ok: false; reason: "no_current_user" | StorageFailureReason };
+
+export type ClearOutboxResult =
+  | { ok: true; cleared: number }
+  | { ok: false; reason: "no_current_user" | StorageFailureReason };
 
 export type LessonOutboxContext = {
   lessonSlug: string;
@@ -213,33 +220,67 @@ function parseEntries(raw: string | null): LearningOutboxEntry[] {
   });
 }
 
-function pruneEntries(entries: LearningOutboxEntry[], now = Date.now()): LearningOutboxEntry[] {
-  return entries
-    .filter((entry) => now - entry.updatedAt <= RETENTION_MS)
-    .sort((a, b) => a.updatedAt - b.updatedAt)
-    .slice(-MAX_OUTBOX_ENTRIES);
-}
-
 function readAllEntries(): LearningOutboxEntry[] {
   if (typeof window === "undefined") return [];
   try {
-    return pruneEntries(parseEntries(localStorage.getItem(OUTBOX_KEY)));
+    return parseEntries(localStorage.getItem(OUTBOX_KEY));
   } catch {
     return [];
   }
 }
 
+function storageFailureReason(error: unknown): StorageFailureReason {
+  const candidate = error as { name?: unknown; code?: unknown } | null;
+  if (
+    candidate?.name === "QuotaExceededError" ||
+    candidate?.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    candidate?.code === 22 ||
+    candidate?.code === 1014
+  ) {
+    return "storage_capacity";
+  }
+  return "storage_unavailable";
+}
+
+function storageResultReason(error: unknown): StorageFailureReason {
+  return error instanceof StorageUnavailableError
+    ? error.reason
+    : storageFailureReason(error);
+}
+
 function writeAllEntries(entries: LearningOutboxEntry[]): void {
   if (typeof window === "undefined") throw new StorageUnavailableError();
   try {
-    localStorage.setItem(OUTBOX_KEY, JSON.stringify(pruneEntries(entries)));
-  } catch {
-    throw new StorageUnavailableError();
+    // Web Storage replaces a value atomically. One write means a quota error
+    // leaves the previously persisted outbox untouched; never clear or prune
+    // pending work to make room for the new operation.
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(entries));
+  } catch (error) {
+    throw new StorageUnavailableError(storageFailureReason(error));
   }
 }
 
 export function readLearningOutbox(): LearningOutboxEntry[] {
   return readAllEntries();
+}
+
+export function readCurrentUserLearningOutbox(): LearningOutboxEntry[] {
+  const ownerUserId = currentLearnUserId();
+  if (!ownerUserId) return [];
+  return readAllEntries().filter((entry) => entry.ownerUserId === ownerUserId);
+}
+
+export function clearCurrentUserLearningOutbox(): ClearOutboxResult {
+  const ownerUserId = currentLearnUserId();
+  if (!ownerUserId) return { ok: false, reason: "no_current_user" };
+  const entries = readAllEntries();
+  const retained = entries.filter((entry) => entry.ownerUserId !== ownerUserId);
+  try {
+    writeAllEntries(retained);
+    return { ok: true, cleared: entries.length - retained.length };
+  } catch (error) {
+    return { ok: false, reason: storageResultReason(error) };
+  }
 }
 
 export function savePendingProgress(body: {
@@ -271,8 +312,8 @@ export function savePendingProgress(body: {
   try {
     writeAllEntries([...rest, entry]);
     return { ok: true, entry };
-  } catch {
-    return { ok: false, reason: "storage_unavailable" };
+  } catch (error) {
+    return { ok: false, reason: storageResultReason(error) };
   }
 }
 
@@ -302,8 +343,8 @@ export function savePendingCheckpoint(body: CheckpointAttemptPayload): StorageRe
   try {
     writeAllEntries([...rest, entry]);
     return { ok: true, entry };
-  } catch {
-    return { ok: false, reason: "storage_unavailable" };
+  } catch (error) {
+    return { ok: false, reason: storageResultReason(error) };
   }
 }
 

@@ -12,6 +12,14 @@ vi.mock("../lib/api", () => ({
 }));
 
 import { LessonRuntime } from "../components/learn/LessonRuntime";
+import { setSession } from "../lib/auth";
+import {
+  clearCurrentUserLearningOutbox,
+  readLearningOutbox,
+  retryLessonOutbox,
+  savePendingCheckpoint,
+  savePendingProgress,
+} from "../lib/learn";
 
 const OUTBOX_KEY = "fm-learn-outbox-v2";
 const USER_A = { id: "user-a", email: "a@example.com", name: "A", is_admin: false };
@@ -431,7 +439,7 @@ describe("checkpoint outbox", () => {
     ]);
   });
 
-  it("submits answers and clears only the matching successful entry", async () => {
+  it("successful synchronization clears only the exact matching entry and revision", async () => {
     localStorage.setItem(
       OUTBOX_KEY,
       JSON.stringify([
@@ -540,5 +548,330 @@ describe("checkpoint outbox", () => {
 
     await screen.findByText(/automatic local saving is unavailable/i);
     expect(apiPost).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("outbox durability boundaries", () => {
+  const context = {
+    lessonSlug: PROPS.lessonSlug,
+    lessonVersion: PROPS.lessonVersion,
+    catalogHash: PROPS.catalogHash,
+    blockIds: PROPS.blockIds,
+    checkpointSlug: PROPS.checkpointSlug,
+    questions: PROPS.questions.map(({ id, options }) => ({ id, options })),
+  };
+
+  function payload(clientAttemptId: string) {
+    return {
+      lessonSlug: PROPS.lessonSlug,
+      lessonVersion: PROPS.lessonVersion,
+      checkpointSlug: PROPS.checkpointSlug,
+      catalogHash: PROPS.catalogHash,
+      responses: { q1: 1, q2: 0 },
+      clientAttemptId,
+    };
+  }
+
+  it("retains a checkpoint older than the former 21-day boundary", () => {
+    const old = Date.now() - 22 * 24 * 60 * 60 * 1000;
+    localStorage.setItem(
+      OUTBOX_KEY,
+      JSON.stringify([checkpointEntry({ createdAt: old, updatedAt: old, revision: "old" })])
+    );
+
+    expect(readLearningOutbox()).toHaveLength(1);
+    expect(readLearningOutbox()[0]).toMatchObject({
+      kind: "checkpoint",
+      clientAttemptId: "attempt-original",
+      responses: { q1: 1, q2: 0 },
+    });
+  });
+
+  it("retains more than 50 pending checkpoints", () => {
+    const entries = Array.from({ length: 60 }, (_, index) =>
+      checkpointEntry({
+        id: `checkpoint:user-a:attempt-${index}`,
+        clientAttemptId: `attempt-${index}`,
+        revision: `revision-${index}`,
+      })
+    );
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(entries));
+
+    const retained = readLearningOutbox();
+    expect(retained).toHaveLength(60);
+    expect(retained.every((entry) => entry.kind === "checkpoint")).toBe(true);
+  });
+
+  it("does not count-evict checkpoints from a mixed progress/checkpoint outbox", () => {
+    const checkpoints = Array.from({ length: 55 }, (_, index) =>
+      checkpointEntry({
+        id: `checkpoint:user-a:mixed-${index}`,
+        clientAttemptId: `mixed-${index}`,
+        revision: `mixed-revision-${index}`,
+      })
+    );
+    const progress = Array.from({ length: 6 }, (_, index) => ({
+      kind: "progress",
+      id: `progress:user-a:lesson-${index}:1`,
+      ownerUserId: "user-a",
+      lessonSlug: `lesson-${index}`,
+      lessonVersion: 1,
+      catalogHash: "hash-current",
+      revision: `progress-revision-${index}`,
+      lastBlockId: "b1",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      attempts: 0,
+    }));
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify([...progress, ...checkpoints]));
+
+    const retained = readLearningOutbox();
+    expect(retained).toHaveLength(61);
+    expect(retained.filter((entry) => entry.kind === "checkpoint")).toHaveLength(55);
+  });
+
+  it("compacts progress only by user, lesson, and lesson version", () => {
+    const otherUserProgress = {
+      kind: "progress",
+      id: `progress:user-b:${PROPS.lessonSlug}:1`,
+      ownerUserId: "user-b",
+      lessonSlug: PROPS.lessonSlug,
+      lessonVersion: 1,
+      catalogHash: "hash-current",
+      revision: "user-b-revision",
+      lastBlockId: "b1",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      attempts: 0,
+    };
+    localStorage.setItem(
+      OUTBOX_KEY,
+      JSON.stringify([
+        otherUserProgress,
+        checkpointEntry({ id: "checkpoint:user-a:unrelated", clientAttemptId: "unrelated" }),
+      ])
+    );
+
+    expect(
+      savePendingProgress({
+        lessonSlug: PROPS.lessonSlug,
+        lessonVersion: 1,
+        catalogHash: PROPS.catalogHash,
+        lastBlockId: "b1",
+      }).ok
+    ).toBe(true);
+    expect(
+      savePendingProgress({
+        lessonSlug: PROPS.lessonSlug,
+        lessonVersion: 1,
+        catalogHash: PROPS.catalogHash,
+        lastBlockId: "b2",
+      }).ok
+    ).toBe(true);
+    expect(
+      savePendingProgress({
+        lessonSlug: PROPS.lessonSlug,
+        lessonVersion: 2,
+        catalogHash: PROPS.catalogHash,
+        lastBlockId: "b1",
+      }).ok
+    ).toBe(true);
+
+    const retained = readLearningOutbox();
+    const currentVersion = retained.filter(
+      (entry) =>
+        entry.kind === "progress" &&
+        entry.ownerUserId === "user-a" &&
+        entry.lessonSlug === PROPS.lessonSlug &&
+        entry.lessonVersion === 1
+    );
+    expect(currentVersion).toHaveLength(1);
+    expect(currentVersion[0]).toMatchObject({ lastBlockId: "b2" });
+    expect(retained).toContainEqual(otherUserProgress);
+    expect(retained.some((entry) => entry.kind === "progress" && entry.lessonVersion === 2)).toBe(true);
+    expect(retained.some((entry) => entry.kind === "checkpoint")).toBe(true);
+  });
+
+  it("preserves the original checkpoint through repeated network outages", async () => {
+    expect(savePendingCheckpoint(payload("outage-attempt")).ok).toBe(true);
+    apiPost.mockRejectedValue(new Error("POST → network error"));
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await retryLessonOutbox(context, vi.fn());
+    }
+
+    expect(apiPost).toHaveBeenCalledTimes(3);
+    expect(readLearningOutbox()).toMatchObject([
+      {
+        kind: "checkpoint",
+        clientAttemptId: "outage-attempt",
+        responses: { q1: 1, q2: 0 },
+      },
+    ]);
+  });
+
+  it("preserves the original attempt and responses through persistent catalogue mismatch", async () => {
+    expect(savePendingCheckpoint(payload("mismatch-attempt")).ok).toBe(true);
+    apiPost.mockRejectedValue(new Error("409 catalogue_version_mismatch"));
+    const events: any[] = [];
+
+    await retryLessonOutbox(context, (event) => events.push(event));
+    await retryLessonOutbox(context, (event) => events.push(event));
+
+    expect(events).toHaveLength(2);
+    expect(events.every((event) => event.kind === "retry-paused" && event.reason === "mismatch")).toBe(true);
+    expect(readLearningOutbox()).toMatchObject([
+      {
+        kind: "checkpoint",
+        clientAttemptId: "mismatch-attempt",
+        responses: { q1: 1, q2: 0 },
+      },
+    ]);
+  });
+
+  it("preserves a checkpoint after retry exhaustion responses", async () => {
+    expect(savePendingCheckpoint(payload("retry-bound-attempt")).ok).toBe(true);
+    apiPost.mockRejectedValue(new Error("POST → 503 transient database contention"));
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await retryLessonOutbox(context, vi.fn());
+    }
+
+    expect(apiPost).toHaveBeenCalledTimes(4);
+    expect(readLearningOutbox()).toMatchObject([
+      {
+        kind: "checkpoint",
+        clientAttemptId: "retry-bound-attempt",
+        responses: { q1: 1, q2: 0 },
+      },
+    ]);
+  });
+
+  it("leaves the previously stored outbox byte-for-byte intact on quota failure", () => {
+    const existing = [
+      checkpointEntry({ lessonVersion: 0, revision: "existing-a" }),
+      checkpointEntry({
+        id: "checkpoint:user-b:existing-b",
+        ownerUserId: "user-b",
+        clientAttemptId: "existing-b",
+        revision: "existing-b",
+      }),
+    ];
+    const raw = JSON.stringify(existing);
+    localStorage.setItem(OUTBOX_KEY, raw);
+    const original = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (key, value) {
+      if (key === OUTBOX_KEY) throw new DOMException("full", "QuotaExceededError");
+      return original.call(this, key, value);
+    });
+
+    const saved = savePendingCheckpoint(payload("quota-attempt"));
+
+    expect(saved).toEqual({ ok: false, reason: "storage_capacity" });
+    expect(localStorage.getItem(OUTBOX_KEY)).toBe(raw);
+  });
+
+  it("shows an honest persistent recovery state when a new attempt cannot fit", async () => {
+    const existing = [
+      checkpointEntry({ lessonVersion: 0, revision: "existing-a" }),
+      checkpointEntry({
+        id: "checkpoint:user-b:existing-b",
+        ownerUserId: "user-b",
+        clientAttemptId: "existing-b",
+        revision: "existing-b",
+      }),
+    ];
+    const raw = JSON.stringify(existing);
+    localStorage.setItem(OUTBOX_KEY, raw);
+    const original = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (key, value) {
+      if (key === OUTBOX_KEY) throw new DOMException("full", "QuotaExceededError");
+      return original.call(this, key, value);
+    });
+
+    renderRuntime();
+    answerAll();
+    fireEvent.click(screen.getByRole("button", { name: /check my understanding/i }));
+
+    expect(await screen.findByText(/browser storage is full/i)).toBeInTheDocument();
+    expect(screen.getByText(/new checkpoint attempt was not saved or submitted/i)).toBeInTheDocument();
+    const recovery = screen.getByRole("textbox", { name: /learning recovery data/i });
+    const recoveryText = (recovery as HTMLTextAreaElement).value;
+    expect(recoveryText).toContain("attempt-new");
+    expect(recoveryText).not.toContain("user-b");
+    expect(localStorage.getItem(OUTBOX_KEY)).toBe(raw);
+    expect(apiPost).not.toHaveBeenCalled();
+  });
+
+  it("requires separate explicit confirmation before clearing current-user pending work", async () => {
+    const existing = [
+      checkpointEntry({ lessonVersion: 0, revision: "existing-a" }),
+      checkpointEntry({
+        id: "checkpoint:user-b:existing-b",
+        ownerUserId: "user-b",
+        clientAttemptId: "existing-b",
+        revision: "existing-b",
+      }),
+    ];
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(existing));
+    const original = Storage.prototype.setItem;
+    let failedOnce = false;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (key, value) {
+      if (key === OUTBOX_KEY && !failedOnce) {
+        failedOnce = true;
+        throw new DOMException("full", "QuotaExceededError");
+      }
+      return original.call(this, key, value);
+    });
+
+    renderRuntime();
+    answerAll();
+    fireEvent.click(screen.getByRole("button", { name: /check my understanding/i }));
+    await screen.findByText(/browser storage is full/i);
+
+    fireEvent.click(screen.getByRole("button", { name: /clear 1 saved pending write/i }));
+    expect(outbox()).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /confirm clear 1/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /confirm clear 1/i }));
+    await screen.findByText(/stored pending work was cleared/i);
+    expect(outbox()).toHaveLength(1);
+    expect(outbox()[0]).toMatchObject({ ownerUserId: "user-b", clientAttemptId: "existing-b" });
+  });
+
+  it("hides recovery data after an account change and never clears another user", async () => {
+    const existing = [
+      checkpointEntry({ lessonVersion: 0, revision: "existing-a" }),
+      checkpointEntry({
+        id: "checkpoint:user-b:existing-b",
+        ownerUserId: "user-b",
+        clientAttemptId: "existing-b",
+        revision: "existing-b",
+      }),
+    ];
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(existing));
+    const original = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (key, value) {
+      if (key === OUTBOX_KEY) throw new DOMException("full", "QuotaExceededError");
+      return original.call(this, key, value);
+    });
+
+    renderRuntime();
+    answerAll();
+    fireEvent.click(screen.getByRole("button", { name: /check my understanding/i }));
+    await screen.findByRole("textbox", { name: /learning recovery data/i });
+
+    act(() => setSession("token-user-b", USER_B));
+
+    await screen.findByText(/recovery data is hidden because the signed-in account changed/i);
+    expect(screen.queryByRole("textbox", { name: /learning recovery data/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /clear .* pending/i })).not.toBeInTheDocument();
+
+    vi.restoreAllMocks();
+    const cleared = clearCurrentUserLearningOutbox();
+    expect(cleared).toEqual({ ok: true, cleared: 1 });
+    expect(outbox()).toHaveLength(1);
+    expect(outbox()[0]).toMatchObject({ ownerUserId: "user-a", clientAttemptId: "attempt-original" });
   });
 });
