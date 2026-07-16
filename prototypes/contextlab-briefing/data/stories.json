@@ -1,0 +1,458 @@
+{
+  "edition": {
+    "date": "2026-07-16",
+    "title": "ContextLab Briefing",
+    "intro": "Seven briefings on what moved in LLM research: data curation, a replication worth trusting, a context-window claim worth doubting, and more.",
+    "contentNote": "Demonstration content. Every paper, lab, author and result in this edition is fictional, and source links use reserved .example addresses that do not resolve."
+  },
+  "stories": [
+    {
+      "id": "st-2026-07-16-curation",
+      "editionDate": "2026-07-16",
+      "headline": "A 3B model matches a 7B baseline on most reasoning suites — through data curation alone",
+      "dek": "A preprint from the fictional Meridian Lab reports that aggressive deduplication and difficulty-aware sampling let a small model close most of the gap to one twice its size.",
+      "storyType": "research-paper",
+      "evidenceStatus": "preprint",
+      "readingTimeMinutes": 4,
+      "topics": ["training data", "efficiency"],
+      "whyItMatters": "If curation can substitute for scale at this ratio, small on-device models become viable for tasks that currently require hosted ones — and training budgets shift from compute toward data work.",
+      "whatIsNew": "Prior curation studies mostly showed gains on perplexity or single benchmarks. This is the first fixture-world study to hold architecture and token count fixed while varying only the curation pipeline across six public reasoning suites.",
+      "body": [
+        "The Meridian Lab team trained two 3-billion-parameter models on identical budgets of 600 billion tokens. The control used a standard filtered web mix; the treatment used the same pool after near-duplicate removal, contamination screening against the evaluation suites, and a sampler that up-weights documents scored as moderately difficult by a small probe model.",
+        "On four of the six suites, the curated 3B model landed within one point of a 7B baseline trained on the uncurated mix. The two exceptions were multi-step arithmetic and a long-context retrieval suite, where the larger model kept a clear lead — a pattern the authors read as capacity, not data, being the binding constraint for those skills.",
+        "The paper's ablations attribute roughly two-thirds of the gain to deduplication and contamination screening, and the remainder to difficulty sampling. The ablations were run only on the smallest evaluation suite, however, so the attribution is weaker than the headline result."
+      ],
+      "whatRemainsUncertain": "Whether the effect survives at larger scales, in languages other than English, and under evaluation suites the probe model was not tuned against. The ablation-based attribution is measured on one suite only.",
+      "confidence": "moderate",
+      "claims": [
+        {
+          "id": "cl-curation-match",
+          "text": "A curated 3B model scored within one point of an uncurated 7B baseline on four of six public reasoning suites, at a fixed 600B-token budget.",
+          "confidence": "moderate",
+          "support": "supported",
+          "sourceIds": ["src-curation-preprint"],
+          "caveat": "Single lab, single run per condition; no variance estimates are reported."
+        },
+        {
+          "id": "cl-curation-attribution",
+          "text": "About two-thirds of the improvement comes from deduplication and contamination screening rather than difficulty sampling.",
+          "confidence": "low",
+          "support": "partially-supported",
+          "sourceIds": ["src-curation-preprint", "src-curation-dataset"],
+          "caveat": "The ablation supporting this split was run on only one of the six evaluation suites."
+        },
+        {
+          "id": "cl-curation-multilingual",
+          "text": "The authors suggest the same pipeline would deliver similar gains for non-English training corpora.",
+          "confidence": "low",
+          "support": "unsupported",
+          "sourceIds": [],
+          "caveat": "No non-English experiments appear in the paper; this is speculation in the discussion section."
+        }
+      ],
+      "sources": [
+        {
+          "id": "src-curation-preprint",
+          "title": "Curation Is a Capacity Multiplier: Matched-Budget Training with Difficulty-Aware Sampling",
+          "authors": "R. Okafor, L. Brandt, S. Ye (Meridian Lab — fictional)",
+          "url": "https://papers.contextlab.example/2607.01142",
+          "sourceType": "preprint",
+          "publishedDate": "2026-07-11",
+          "isPrimary": true,
+          "reviewStatus": "preprint"
+        },
+        {
+          "id": "src-curation-dataset",
+          "title": "MeridianMix-600B dataset card and curation pipeline",
+          "authors": "Meridian Lab (fictional)",
+          "url": "https://data.contextlab.example/meridianmix-600b",
+          "sourceType": "dataset",
+          "publishedDate": "2026-07-11",
+          "isPrimary": true,
+          "reviewStatus": "not-applicable"
+        }
+      ],
+      "caveats": [
+        "Preprint; not yet peer reviewed.",
+        "Evaluation suites and the difficulty probe share some training lineage, which could flatter the curated model."
+      ],
+      "corrections": [],
+      "publishedAt": "2026-07-16T06:00:00Z",
+      "updatedAt": "2026-07-16T06:00:00Z"
+    },
+    {
+      "id": "st-2026-07-16-replication",
+      "editionDate": "2026-07-16",
+      "headline": "Independent replication confirms a headline reasoning gain — at half the originally reported size",
+      "dek": "A peer-reviewed replication of last winter's widely shared 'deliberation decoding' result finds the effect real but much smaller once prompt formatting is controlled.",
+      "storyType": "replication",
+      "evidenceStatus": "replicated",
+      "readingTimeMinutes": 5,
+      "topics": ["evaluation", "inference"],
+      "whyItMatters": "Replications of headline LLM results are rare. This one both validates the underlying idea and shows how much of a famous number was formatting artefact — a useful calibration for reading future decoding papers.",
+      "whatIsNew": "The original study reported an 11-point average gain from deliberation decoding. The replication, across three model families and with prompt formatting held fixed, measures 5.2 points — statistically solid, but half the headline.",
+      "body": [
+        "The fictional Alvarez group at the Institute for Computation and Language re-ran the deliberation-decoding protocol on three open-weight model families, pre-registering their analysis and releasing all transcripts. The effect replicated in every family: deliberation decoding beat greedy decoding on all twelve tasks.",
+        "The size of the effect is where the stories diverge. The original paper compared deliberation prompts against terse baselines, and the replication shows that about half of the reported 11-point gain disappears when both conditions share the same instruction formatting. What remains — 5.2 points on average — tracks the original paper's mechanism claims but not its magnitude.",
+        "The authors are careful to frame this as confirmation, not debunking: the technique works, cheaply, everywhere they tested it. But the paper's discussion section is blunt that evaluation practice, not the decoding idea, produced the inflated number."
+      ],
+      "whatRemainsUncertain": "Whether the effect holds on proprietary frontier models, which the replication could not access, and whether the 5.2-point average hides task families where the technique is useless.",
+      "confidence": "high",
+      "claims": [
+        {
+          "id": "cl-replication-effect",
+          "text": "Deliberation decoding improves accuracy over greedy decoding across three open-weight model families and twelve tasks.",
+          "confidence": "high",
+          "support": "supported",
+          "sourceIds": ["src-replication-paper", "src-original-preprint"]
+        },
+        {
+          "id": "cl-replication-size",
+          "text": "The average gain is 5.2 points under matched prompt formatting, roughly half the 11 points originally reported.",
+          "confidence": "high",
+          "support": "supported",
+          "sourceIds": ["src-replication-paper"],
+          "caveat": "Open-weight models only; the original study also included one proprietary model the replication could not test."
+        }
+      ],
+      "sources": [
+        {
+          "id": "src-replication-paper",
+          "title": "Deliberation Decoding, Replicated: A Pre-Registered Multi-Family Study",
+          "authors": "M. Alvarez, T. Nyström, J. Park (Institute for Computation and Language — fictional)",
+          "url": "https://proceedings.contextlab.example/icl-2026/alvarez-deliberation",
+          "sourceType": "proceedings",
+          "publishedDate": "2026-07-08",
+          "isPrimary": true,
+          "reviewStatus": "peer-reviewed"
+        },
+        {
+          "id": "src-original-preprint",
+          "title": "Deliberation Decoding: Letting Models Think Before They Commit",
+          "authors": "K. Duval, A. Whitfield (fictional)",
+          "url": "https://papers.contextlab.example/2512.08871",
+          "sourceType": "preprint",
+          "publishedDate": "2025-12-19",
+          "isPrimary": true,
+          "reviewStatus": "preprint"
+        }
+      ],
+      "caveats": [
+        "The replication used temperature 0 throughout; the original swept temperatures and reported the best."
+      ],
+      "corrections": [
+        {
+          "date": "2026-07-16",
+          "summary": "An earlier version of this briefing said the replication reused the original study's prompts verbatim. It re-transcribed them into a shared template; the comparison of formats is the paper's own."
+        }
+      ],
+      "publishedAt": "2026-07-16T06:00:00Z",
+      "updatedAt": "2026-07-16T09:40:00Z"
+    },
+    {
+      "id": "st-2026-07-16-context-claim",
+      "editionDate": "2026-07-16",
+      "headline": "Startup claims a 10M-token context window with 'near-perfect' recall — without releasing evaluations",
+      "dek": "Voltaic AI (fictional) announced its Ampere-1 model accepts ten-million-token inputs. The recall claim rests entirely on the company's own blog post.",
+      "storyType": "company-claim",
+      "evidenceStatus": "unverified-claim",
+      "readingTimeMinutes": 3,
+      "topics": ["long context", "industry"],
+      "whyItMatters": "Context-window announcements shape purchasing and research agendas long before independent numbers exist. Knowing which part of this claim is documented and which is marketing keeps the two from blurring.",
+      "whatIsNew": "The claimed window is an order of magnitude beyond what the fixture-world's shipping models document. The API documentation does confirm the input limit; nothing public supports the recall figure.",
+      "body": [
+        "Voltaic AI's announcement makes two distinct assertions. The first — that Ampere-1 accepts inputs up to ten million tokens — is verifiable in the ordinary sense: the public API documentation states the limit and the pricing page charges for it. The second — 'near-perfect recall across the full window' — cites an internal needle-in-a-haystack evaluation the company has not released, on data it has not described.",
+        "Needle-style tests are also the weakest form of long-context evidence: retrieving a planted string says little about reasoning over dispersed information. Independent long-context suites in the fixture world routinely show models passing needle tests while failing multi-hop aggregation at a tenth of the claimed window.",
+        "Until transcripts or third-party numbers exist, the honest summary is: the window is real, the recall quality is a company claim."
+      ],
+      "whatRemainsUncertain": "Everything about quality: recall beyond planted-needle tasks, degradation across the window, latency and cost at full length, and whether the internal evaluation would survive independent replication.",
+      "confidence": "low",
+      "claims": [
+        {
+          "id": "cl-context-window",
+          "text": "Ampere-1's API accepts inputs up to ten million tokens.",
+          "confidence": "high",
+          "support": "supported",
+          "sourceIds": ["src-voltaic-docs"],
+          "caveat": "Documented limit; independent confirmation of behaviour at the limit is not yet available."
+        },
+        {
+          "id": "cl-context-recall",
+          "text": "Ampere-1 achieves near-perfect recall across the full ten-million-token window.",
+          "confidence": "low",
+          "support": "unsupported",
+          "sourceIds": [],
+          "caveat": "Based solely on an unreleased internal evaluation described in the company's blog post. No transcripts, methodology or third-party results exist."
+        }
+      ],
+      "sources": [
+        {
+          "id": "src-voltaic-blog",
+          "title": "Introducing Ampere-1: Ten Million Tokens of Context",
+          "authors": "Voltaic AI (fictional)",
+          "url": "https://voltaic.contextlab.example/blog/ampere-1",
+          "sourceType": "official-blog",
+          "publishedDate": "2026-07-14",
+          "isPrimary": true,
+          "reviewStatus": "not-peer-reviewed"
+        },
+        {
+          "id": "src-voltaic-docs",
+          "title": "Ampere-1 API reference — model limits",
+          "authors": "Voltaic AI (fictional)",
+          "url": "https://voltaic.contextlab.example/docs/limits",
+          "sourceType": "technical-report",
+          "publishedDate": "2026-07-14",
+          "isPrimary": true,
+          "reviewStatus": "not-applicable"
+        }
+      ],
+      "caveats": [
+        "All performance information originates from the vendor.",
+        "This briefing will be updated if independent evaluations appear."
+      ],
+      "corrections": [],
+      "publishedAt": "2026-07-16T06:00:00Z",
+      "updatedAt": "2026-07-16T06:00:00Z"
+    },
+    {
+      "id": "st-2026-07-16-open-release",
+      "editionDate": "2026-07-16",
+      "headline": "Open-weights release ships with a fully reproducible evaluation harness",
+      "dek": "The fictional Northfield Institute released Aster-9B under an open licence, with pinned dependencies, fixed seeds and per-task transcripts for every reported number.",
+      "storyType": "official-release",
+      "evidenceStatus": "official",
+      "readingTimeMinutes": 3,
+      "topics": ["open models", "evaluation"],
+      "whyItMatters": "Most model cards report numbers nobody can regenerate. A release where every benchmark score comes with the exact command, seed and transcript sets a reproducibility bar other labs can be held to.",
+      "whatIsNew": "Not the model — its mid-pack scores are unremarkable — but the packaging: a one-command harness that regenerates the model card's every number, published alongside the weights on day one.",
+      "body": [
+        "Aster-9B itself is a competent 9-billion-parameter open-weights model. What drew attention in the fixture world is the release engineering: the technical report's benchmark table is generated by a published harness with pinned dependencies and fixed seeds, and each cell links to the transcripts behind it.",
+        "The institute reports that two external groups regenerated the full table to within 0.1 points before release. Deviations larger than that fail the harness's own check, which turns 'we couldn't reproduce your numbers' from an argument into a bug report.",
+        "The obvious cost is that the harness pins one evaluation configuration; scores under other harnesses will differ, and the report says so plainly rather than presenting its numbers as canonical."
+      ],
+      "whatRemainsUncertain": "Whether the reproducibility discipline survives the first post-release model update, and how the pinned harness's numbers relate to the community's preferred evaluation configurations.",
+      "confidence": "high",
+      "claims": [
+        {
+          "id": "cl-release-harness",
+          "text": "Every benchmark number in the Aster-9B model card can be regenerated from a published harness with pinned dependencies, fixed seeds and per-task transcripts.",
+          "confidence": "high",
+          "support": "supported",
+          "sourceIds": ["src-aster-report", "src-aster-repo"]
+        },
+        {
+          "id": "cl-release-external",
+          "text": "Two external groups regenerated the full benchmark table to within 0.1 points before release.",
+          "confidence": "moderate",
+          "support": "partially-supported",
+          "sourceIds": ["src-aster-report"],
+          "caveat": "Reported in the institute's own technical report; the external groups' write-ups have not been published yet."
+        }
+      ],
+      "sources": [
+        {
+          "id": "src-aster-report",
+          "title": "Aster-9B: Model, Data Statement and Reproducible Evaluation",
+          "authors": "Northfield Institute (fictional)",
+          "url": "https://northfield.contextlab.example/aster-9b/report",
+          "sourceType": "technical-report",
+          "publishedDate": "2026-07-15",
+          "isPrimary": true,
+          "reviewStatus": "not-peer-reviewed"
+        },
+        {
+          "id": "src-aster-repo",
+          "title": "aster-eval: reproducible evaluation harness for Aster-9B",
+          "authors": "Northfield Institute (fictional)",
+          "url": "https://code.contextlab.example/northfield/aster-eval",
+          "sourceType": "code-repository",
+          "publishedDate": "2026-07-15",
+          "isPrimary": true,
+          "reviewStatus": "not-applicable"
+        }
+      ],
+      "caveats": [
+        "Benchmark scores are only comparable to other models under the same pinned harness configuration."
+      ],
+      "corrections": [],
+      "publishedAt": "2026-07-16T06:00:00Z",
+      "updatedAt": "2026-07-16T06:00:00Z"
+    },
+    {
+      "id": "st-2026-07-16-contamination",
+      "editionDate": "2026-07-16",
+      "headline": "Meta-analysis: benchmark contamination inflates reported scores by two to eight points",
+      "dek": "A peer-reviewed synthesis of 41 fictional contamination studies finds consistent inflation — and wide disagreement about how to measure it.",
+      "storyType": "analysis",
+      "evidenceStatus": "peer-reviewed",
+      "readingTimeMinutes": 6,
+      "topics": ["evaluation", "training data"],
+      "whyItMatters": "Contamination estimates decide how much to trust every leaderboard. A synthesis putting bounds on the inflation — and showing the bounds depend heavily on detection method — is more actionable than any single study.",
+      "whatIsNew": "This is the fixture-world's first meta-analysis across contamination studies rather than another individual detection paper. The headline range aggregates 41 studies covering 210 model-benchmark pairs.",
+      "body": [
+        "The authors, from the fictional Osei group, systematically collected every study since 2023 that estimated contamination effects with a defensible counterfactual — either decontaminated retraining or matched held-out splits. Across 210 model-benchmark pairs, the median inflation attributable to contamination was 3.9 points, with an interquartile range of roughly two to eight.",
+        "The more uncomfortable finding is methodological: n-gram-overlap detectors and embedding-based detectors disagree on which items are contaminated in about a third of cases, and studies using the weaker detector systematically report lower inflation. The meta-analysis weights by counterfactual quality, but the authors are explicit that the field lacks a ground-truth detection standard.",
+        "Math-heavy and knowledge-recall benchmarks sit at the top of the inflation range; dialogue and instruction-following suites at the bottom. The paper recommends that leaderboards report scores alongside a contamination audit rather than treating decontamination as a binary property."
+      ],
+      "whatRemainsUncertain": "True contamination rates for closed training corpora, where every detector is a proxy; and whether inflation compounds as benchmarks age into later training snapshots.",
+      "confidence": "moderate",
+      "claims": [
+        {
+          "id": "cl-contamination-range",
+          "text": "Across 210 model-benchmark pairs, contamination inflates reported scores by a median of 3.9 points, with an interquartile range of about two to eight.",
+          "confidence": "moderate",
+          "support": "supported",
+          "sourceIds": ["src-contamination-meta"],
+          "caveat": "Aggregates heterogeneous detection methods; the range narrows or widens depending on which detector families are trusted."
+        },
+        {
+          "id": "cl-contamination-detectors",
+          "text": "N-gram and embedding-based contamination detectors disagree on roughly a third of flagged items.",
+          "confidence": "moderate",
+          "support": "supported",
+          "sourceIds": ["src-contamination-meta", "src-detector-study"]
+        }
+      ],
+      "sources": [
+        {
+          "id": "src-contamination-meta",
+          "title": "How Much Does Contamination Buy? A Meta-Analysis of 41 Studies",
+          "authors": "F. Osei, H. Lindqvist, P. Raman (fictional)",
+          "url": "https://proceedings.contextlab.example/icl-2026/osei-contamination",
+          "sourceType": "proceedings",
+          "publishedDate": "2026-07-06",
+          "isPrimary": true,
+          "reviewStatus": "peer-reviewed"
+        },
+        {
+          "id": "src-detector-study",
+          "title": "Detectors Disagree: Auditing Contamination Auditors",
+          "authors": "C. Weber, N. Adeyemi (fictional)",
+          "url": "https://papers.contextlab.example/2604.05519",
+          "sourceType": "preprint",
+          "publishedDate": "2026-04-09",
+          "isPrimary": false,
+          "reviewStatus": "preprint"
+        }
+      ],
+      "caveats": [
+        "Meta-analysis inherits the publication bias of its inputs; null-result contamination studies are plausibly under-published."
+      ],
+      "corrections": [],
+      "publishedAt": "2026-07-16T06:00:00Z",
+      "updatedAt": "2026-07-16T06:00:00Z"
+    },
+    {
+      "id": "st-2026-07-16-circuit",
+      "editionDate": "2026-07-16",
+      "headline": "Interpretability team maps a complete addition circuit — in one model family",
+      "dek": "A fictional preprint traces three-digit addition to a specific attention-and-MLP circuit and shows targeted edits break it predictably. Generalisation is untested.",
+      "storyType": "research-paper",
+      "evidenceStatus": "preprint",
+      "readingTimeMinutes": 5,
+      "topics": ["interpretability"],
+      "whyItMatters": "Mechanistic claims usually stop at correlation. A circuit you can ablate with predicted, dose-dependent effects is closer to the causal standard interpretability keeps promising — if it turns out to transfer beyond one architecture.",
+      "whatIsNew": "Previous fixture-world circuit work covered toy models or single heads. This maps an end-to-end circuit for three-digit addition in a 2B production-grade model, with causal interventions matching predictions on 94% of test items.",
+      "body": [
+        "The team, at the fictional Halcyon Interpretability Group, combined activation patching with sparse-feature decomposition to isolate a nine-component circuit: three attention heads that align digit positions, and six MLP feature clusters that implement carry propagation. The circuit accounts for the model's addition behaviour in the sense that ablating any component degrades accuracy in the specific digit positions the mechanism predicts.",
+        "The headline validation is interventional: editing the carry features flips predicted digits — and only those digits — on 94% of held-out problems. Random-feature edits of matched magnitude produce no such pattern, which argues against the circuit being an artefact of the decomposition method.",
+        "The scope limits are stated plainly. Everything was done on one 2B model from one family; the authors tried the smallest sibling model and found the digit-alignment heads in different layers, suggesting the circuit's location, and possibly its structure, is family-specific."
+      ],
+      "whatRemainsUncertain": "Whether comparable circuits exist in other architectures, how the mechanism changes with scale, and whether the sparse-feature vocabulary generalises beyond arithmetic.",
+      "confidence": "moderate",
+      "claims": [
+        {
+          "id": "cl-circuit-mapped",
+          "text": "A nine-component circuit fully accounts for three-digit addition in the studied 2B model, validated by targeted ablations with predicted digit-level effects.",
+          "confidence": "moderate",
+          "support": "supported",
+          "sourceIds": ["src-circuit-preprint"],
+          "caveat": "94% intervention-prediction agreement; the remaining 6% of items behave in ways the circuit does not explain."
+        },
+        {
+          "id": "cl-circuit-general",
+          "text": "Similar carry-propagation circuits exist across model families.",
+          "confidence": "low",
+          "support": "unsupported",
+          "sourceIds": [],
+          "caveat": "Untested. The one sibling model examined showed the components in different layers, which cuts against straightforward transfer."
+        }
+      ],
+      "sources": [
+        {
+          "id": "src-circuit-preprint",
+          "title": "Carry Chains: A Complete Circuit for Three-Digit Addition in a 2B Transformer",
+          "authors": "D. Petrova, Y. Kim, O. Marchetti (Halcyon Interpretability Group — fictional)",
+          "url": "https://papers.contextlab.example/2607.00873",
+          "sourceType": "preprint",
+          "publishedDate": "2026-07-09",
+          "isPrimary": true,
+          "reviewStatus": "preprint"
+        }
+      ],
+      "caveats": [
+        "Preprint; the interactive circuit visualiser the paper references is not yet public, so figures cannot be independently inspected."
+      ],
+      "corrections": [],
+      "publishedAt": "2026-07-16T06:00:00Z",
+      "updatedAt": "2026-07-16T06:00:00Z"
+    },
+    {
+      "id": "st-2026-07-16-eval-cards",
+      "editionDate": "2026-07-16",
+      "headline": "Position: leaderboard culture is warping evaluation — and 'eval cards' could help",
+      "dek": "A fictional position paper argues that single-number rankings drive the field's worst habits and proposes a structured disclosure standard. It is an argument, not a finding.",
+      "storyType": "opinion",
+      "evidenceStatus": "opinion",
+      "readingTimeMinutes": 4,
+      "topics": ["evaluation", "research practice"],
+      "whyItMatters": "Norms change through arguments like this one. Whether or not eval cards are adopted, the paper names incentives — ranking pressure, configuration shopping, silent test-set reuse — that every reader of leaderboards should price in.",
+      "whatIsNew": "The eval-card proposal itself: a fixed disclosure schema covering configuration, contamination auditing, uncertainty and selection pressure, intended to travel with every reported score the way data statements travel with datasets.",
+      "body": [
+        "The authors' diagnosis is that leaderboards compress incommensurable choices — prompt format, sampling, harness version, test-set vintage — into one number, and that the compression is where questionable practices hide. They catalogue configuration shopping and selective reporting from published examples in the fixture literature, though the catalogue is illustrative rather than a measured prevalence estimate.",
+        "Their proposal is an 'eval card': a required, machine-readable companion to any reported score, disclosing the full configuration, a contamination audit, bootstrap uncertainty, and how many configurations were tried before the reported one. Venues, not authors, would enforce it.",
+        "This briefing treats the paper as what it is: a well-argued opinion. Its factual citations check out, but its central claims — that leaderboard pressure causes the documented behaviours, and that disclosure would curb them — are causal judgements the paper argues for rather than demonstrates."
+      ],
+      "whatRemainsUncertain": "Whether disclosure requirements change behaviour rather than adding paperwork, and whether any venue adopts the schema. The paper offers no empirical test of its causal story.",
+      "confidence": "low",
+      "claims": [
+        {
+          "id": "cl-evalcards-practices",
+          "text": "Configuration shopping and selective reporting occur in published evaluation work.",
+          "confidence": "moderate",
+          "support": "supported",
+          "sourceIds": ["src-evalcards-paper"],
+          "caveat": "Documented through curated examples, not a systematic prevalence study."
+        },
+        {
+          "id": "cl-evalcards-causal",
+          "text": "Leaderboard ranking pressure is the primary cause of these practices, and mandatory eval cards would reduce them.",
+          "confidence": "low",
+          "support": "partially-supported",
+          "sourceIds": ["src-evalcards-paper"],
+          "caveat": "This is the paper's argued position; no causal evidence or adoption experiment exists."
+        }
+      ],
+      "sources": [
+        {
+          "id": "src-evalcards-paper",
+          "title": "Eval Cards: Reporting Standards for a Field That Ranks Itself",
+          "authors": "A. Ferreira, B. Szabo, W. Tanaka (fictional)",
+          "url": "https://papers.contextlab.example/2606.11207",
+          "sourceType": "preprint",
+          "publishedDate": "2026-06-24",
+          "isPrimary": true,
+          "reviewStatus": "preprint"
+        }
+      ],
+      "caveats": [
+        "Position paper: read its claims as advocacy, not findings.",
+        "Two of the three authors maintain an evaluation harness that would benefit from standardised disclosure."
+      ],
+      "corrections": [],
+      "publishedAt": "2026-07-16T06:00:00Z",
+      "updatedAt": "2026-07-16T06:00:00Z"
+    }
+  ]
+}
