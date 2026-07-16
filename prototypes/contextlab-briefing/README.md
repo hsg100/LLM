@@ -61,7 +61,7 @@ Uses Node's built-in test runner — no packages are installed and no lockfile
 changes. From the repository root:
 
 ```sh
-node --test prototypes/contextlab-briefing/tests/
+node --test "prototypes/contextlab-briefing/tests/*.test.mjs"
 ```
 
 The tests cover the fixture/data contract (ID uniqueness, claim→source
