@@ -1,0 +1,25 @@
+{
+  "name": "ContextLab Briefing",
+  "short_name": "Briefing",
+  "description": "An evidence-first daily briefing on LLM research. Prototype with demonstration content.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f7f4ed",
+  "theme_color": "#f7f4ed",
+  "icons": [
+    {
+      "src": "assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

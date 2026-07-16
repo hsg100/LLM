@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ContextLab Briefing">
+  <rect width="512" height="512" fill="#f7f4ed"/>
+  <rect x="128" y="152" width="256" height="16" rx="8" fill="#23201a"/>
+  <rect x="128" y="196" width="204" height="16" rx="8" fill="#23201a"/>
+  <rect x="128" y="240" width="230" height="16" rx="8" fill="#9d4a1e"/>
+  <rect x="128" y="284" width="160" height="16" rx="8" fill="#776f5f"/>
+  <path d="M312 296l22 22 44-50" stroke="#22633f" stroke-width="20" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <rect x="128" y="344" width="256" height="10" rx="5" fill="#cfc7b4"/>
+</svg>
