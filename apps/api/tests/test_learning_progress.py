@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 from sqlalchemy import text
@@ -18,7 +19,7 @@ from sqlmodel import select
 from starlette.testclient import TestClient
 
 from app.db import engine, session_scope
-from app.models import CheckpointAttempt, LessonProgress, User
+from app.models import CheckpointAttempt, CurriculumProgress, LessonProgress, User
 from app.services import curriculum_catalog
 from app.services.auth import create_token
 from app.services.curriculum_catalog import CatalogIntegrityError, get_catalog
@@ -373,6 +374,92 @@ def test_concurrent_mixed_scores_stay_monotonic(user_id):
         ).one()
         assert row.best_checkpoint_score == 1.0
         assert row.status == "completed" and row.completed_at is not None
+
+
+@dbonly
+def test_concurrent_progress_put_and_checkpoint_post_preserve_owned_fields(user_id):
+    from app.main import app
+
+    with session_scope() as s:
+        other_id = _mk_user(s)
+
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {create_token(user_id)}"}
+    final_block = get_catalog().block_ids(LESSON)[-1]
+    checkpoint_id = uuid.uuid4().hex
+    start = Barrier(2)
+
+    def update_progress():
+        start.wait()
+        return client.put(
+            f"/api/learn/lessons/{LESSON}/progress",
+            json={
+                "lesson_version": 1,
+                "catalog_hash": _hash(),
+                "last_block_id": final_block,
+            },
+            headers=headers,
+        )
+
+    def submit_checkpoint():
+        start.wait()
+        return client.post(
+            f"/api/learn/lessons/{LESSON}/checkpoint-attempts",
+            json={
+                "lesson_version": 1,
+                "checkpoint_slug": "tokens-checkpoint",
+                "catalog_hash": _hash(),
+                "responses": _answers(),
+                "client_attempt_id": checkpoint_id,
+            },
+            headers=headers,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        progress_future = pool.submit(update_progress)
+        checkpoint_future = pool.submit(submit_checkpoint)
+        responses = [progress_future.result(), checkpoint_future.result()]
+
+    assert [response.status_code for response in responses] == [200, 200]
+    with session_scope() as s:
+        lesson = s.exec(
+            select(LessonProgress).where(
+                LessonProgress.user_id == user_id,
+                LessonProgress.lesson_slug == LESSON,
+                LessonProgress.lesson_version == 1,
+            )
+        ).one()
+        assert lesson.last_block_id == final_block
+        assert lesson.best_checkpoint_score == 1.0
+        assert lesson.status == "completed"
+        assert lesson.completed_at is not None
+
+        attempt = s.exec(
+            select(CheckpointAttempt).where(
+                CheckpointAttempt.user_id == user_id,
+                CheckpointAttempt.client_attempt_id == checkpoint_id,
+            )
+        ).one()
+        assert attempt.score == 1.0 and attempt.passed is True
+
+        curriculum = s.exec(
+            select(CurriculumProgress).where(CurriculumProgress.user_id == user_id)
+        ).one()
+        assert curriculum.status == "active"
+        assert curriculum.completed_at is None
+
+        assert (
+            s.exec(
+                select(LessonProgress).where(LessonProgress.user_id == other_id)
+            ).all()
+            == []
+        )
+        assert (
+            s.exec(
+                select(CheckpointAttempt).where(CheckpointAttempt.user_id == other_id)
+            ).all()
+            == []
+        )
 
 
 # ---------------------------------------------------------------------------

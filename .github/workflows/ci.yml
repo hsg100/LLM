@@ -111,8 +111,19 @@ jobs:
         run: printf 'ENV=development\n' > .env
       - name: Build the api/worker image from the root context
         run: docker build -t fieldmap-api -f apps/api/Dockerfile .
-      - name: Baked-catalogue smoke (no mounts — proves the image itself)
-        run: docker run --rm fieldmap-api python -m app.scripts.smoke_curriculum
+      - name: Baked-catalogue smoke (no mounts — proves the exact image input)
+        run: |
+          EXPECTED_VERSION=$(jq -r .curriculum.version curriculum/build/catalog.json)
+          EXPECTED_HASH=$(jq -r .source_tree_hash curriculum/build/catalog.json)
+          docker run --rm fieldmap-api python -m app.scripts.smoke_curriculum --expected-version "$EXPECTED_VERSION" --expected-hash "$EXPECTED_HASH"
+          if docker run --rm fieldmap-api python -m app.scripts.smoke_curriculum --expected-version -1 --expected-hash "$EXPECTED_HASH"; then
+            echo "version mismatch smoke unexpectedly passed"
+            exit 1
+          fi
+          if docker run --rm fieldmap-api python -m app.scripts.smoke_curriculum --expected-version "$EXPECTED_VERSION" --expected-hash "not-$EXPECTED_HASH"; then
+            echo "hash mismatch smoke unexpectedly passed"
+            exit 1
+          fi
       - name: Build via compose (same context wiring the deploys use)
         run: docker compose build api worker
       - name: Boot api with db/redis and probe /health + /ready curriculum fields
