@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contextlab-briefing/story.schema.json",
+  "title": "ContextLab Briefing edition",
+  "description": "Local fixture contract for the ContextLab Briefing prototype. This schema documents the shape of data/stories.json. It is enforced by tests/fixtures.test.mjs (hand-rolled checks mirroring these constraints, so no validator dependency is needed).",
+  "type": "object",
+  "required": ["edition", "stories"],
+  "additionalProperties": false,
+  "properties": {
+    "edition": {
+      "type": "object",
+      "required": ["date", "title", "intro", "contentNote"],
+      "additionalProperties": false,
+      "properties": {
+        "date": { "type": "string", "format": "date", "description": "Edition date (YYYY-MM-DD). Every story's editionDate must match." },
+        "title": { "type": "string", "minLength": 1 },
+        "intro": { "type": "string", "minLength": 1, "description": "One or two calm sentences introducing the edition." },
+        "contentNote": { "type": "string", "minLength": 1, "description": "Honest provenance note. For this prototype it must state that content is synthetic demonstration data." }
+      }
+    },
+    "stories": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/story" }
+    }
+  },
+  "$defs": {
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "moderate", "low"],
+      "description": "Editorial confidence in the finding as stated, not in the story's newsworthiness."
+    },
+    "story": {
+      "type": "object",
+      "required": [
+        "id", "editionDate", "headline", "dek", "storyType", "evidenceStatus",
+        "readingTimeMinutes", "topics", "whyItMatters", "whatIsNew", "body",
+        "whatRemainsUncertain", "confidence", "claims", "sources", "caveats",
+        "corrections", "publishedAt", "updatedAt"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^st-[a-z0-9-]+$",
+          "description": "Stable, globally unique story ID."
+        },
+        "editionDate": { "type": "string", "format": "date" },
+        "headline": { "type": "string", "minLength": 8, "maxLength": 140 },
+        "dek": { "type": "string", "minLength": 8, "maxLength": 280, "description": "Short standfirst shown on cards and under the headline." },
+        "storyType": {
+          "type": "string",
+          "enum": ["research-paper", "replication", "company-claim", "official-release", "analysis", "opinion"]
+        },
+        "evidenceStatus": {
+          "type": "string",
+          "enum": ["peer-reviewed", "preprint", "replicated", "official", "unverified-claim", "opinion", "mixed"],
+          "description": "Publication/evidence status of the story's primary basis."
+        },
+        "readingTimeMinutes": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "topics": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "type": "string", "minLength": 2 } },
+        "whyItMatters": { "type": "string", "minLength": 20 },
+        "whatIsNew": { "type": "string", "minLength": 20 },
+        "body": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 40 },
+          "description": "Main explanation, one string per paragraph. Original prose only."
+        },
+        "whatRemainsUncertain": { "type": "string", "minLength": 20 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "claims": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/claim" },
+          "description": "Individual checkable claims. Claim IDs are unique within a story; sourceIds must reference this story's sources."
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/source" }
+        },
+        "caveats": { "type": "array", "items": { "type": "string", "minLength": 10 } },
+        "corrections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["date", "summary"],
+            "additionalProperties": false,
+            "properties": {
+              "date": { "type": "string", "format": "date" },
+              "summary": { "type": "string", "minLength": 10 }
+            }
+          },
+          "description": "Correction history. An empty array means no corrections have been issued, and the UI must say so honestly."
+        },
+        "publishedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "required": ["id", "text", "confidence", "support", "sourceIds"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^cl-[a-z0-9-]+$" },
+        "text": { "type": "string", "minLength": 20 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "support": {
+          "type": "string",
+          "enum": ["supported", "partially-supported", "unsupported"],
+          "description": "supported: sourceIds non-empty and evidence is direct. partially-supported: sourceIds non-empty but evidence is indirect or incomplete (caveat required). unsupported: no source substantiates the claim; sourceIds must be empty and a caveat is required."
+        },
+        "sourceIds": { "type": "array", "items": { "type": "string" } },
+        "caveat": { "type": "string", "minLength": 10 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["id", "title", "authors", "url", "sourceType", "publishedDate", "isPrimary", "reviewStatus"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^src-[a-z0-9-]+$" },
+        "title": { "type": "string", "minLength": 4 },
+        "authors": { "type": "string", "minLength": 2, "description": "Author list or issuing organisation." },
+        "url": {
+          "type": "string",
+          "pattern": "^https://[a-z0-9.-]+\\.example/",
+          "description": "In this prototype every source is synthetic, so URLs must use a reserved .example host. Real production data would relax this to any https URL."
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": ["preprint", "peer-reviewed-paper", "proceedings", "technical-report", "official-blog", "code-repository", "dataset"]
+        },
+        "publishedDate": { "type": "string", "format": "date" },
+        "isPrimary": { "type": "boolean", "description": "true = primary source (the artefact itself), false = secondary reporting or commentary." },
+        "reviewStatus": {
+          "type": "string",
+          "enum": ["peer-reviewed", "preprint", "not-peer-reviewed", "not-applicable"]
+        }
+      }
+    }
+  }
+}
