@@ -1,0 +1,5 @@
+slug: temperature
+name: Temperature
+short_definition: A sampling control that reshapes the next-token distribution — lower sharpens it toward the top choices, higher flattens it.
+prerequisites:
+  - probability-distribution

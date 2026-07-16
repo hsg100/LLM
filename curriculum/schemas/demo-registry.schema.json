@@ -1,0 +1,16 @@
+{
+  "additionalProperties": false,
+  "description": "Declared interactive-demo IDs (Phase 2: manifest only; runtime is Phase 3).",
+  "properties": {
+    "demos": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Demos",
+      "type": "array"
+    }
+  },
+  "title": "DemoRegistry",
+  "type": "object"
+}

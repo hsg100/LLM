@@ -1,0 +1,5 @@
+slug: query-key-value
+name: Queries, keys and values
+short_definition: The three learned projections of each token used by attention — what I'm looking for (query), what I contain (key), what I hand over (value).
+prerequisites:
+  - attention

@@ -1,0 +1,5 @@
+slug: causal-mask
+name: Causal mask
+short_definition: The constraint that a token may only attend to earlier positions, so generation can't look at the future.
+prerequisites:
+  - attention

@@ -37,6 +37,9 @@ jobs:
       OBSIDIAN_EXPORT_REPO_PATH: /tmp/fieldmap-obsidian
     steps:
       - uses: actions/checkout@v4
+        with:
+          # semver-check compares against the merge-base catalogue
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -44,10 +47,30 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -e ".[dev]"
+          python -m pip install -e ../../tools/curriculum_tools
       - name: Lint (ruff)
         run: ruff check app migrations
-      - name: Migrate (alembic upgrade head)
-        run: alembic upgrade head
+      - name: Curriculum — validate
+        working-directory: .
+        run: curriculum-tools validate
+      - name: Curriculum — artifact drift gate
+        working-directory: .
+        run: |
+          curriculum-tools build --check
+          curriculum-tools emit-schemas --check
+      - name: Curriculum — semantic version discipline
+        working-directory: .
+        run: |
+          git fetch origin main --quiet
+          curriculum-tools semver-check --base-ref origin/main
+      - name: Curriculum — compiler tests
+        working-directory: .
+        run: python -m pytest tools/curriculum_tools/tests -q
+      - name: Migrate (alembic upgrade head, downgrade -1, upgrade head)
+        run: |
+          alembic upgrade head
+          alembic downgrade -1
+          alembic upgrade head
       - name: Test (pytest)
         run: python -m pytest -q
 
@@ -74,3 +97,48 @@ jobs:
         run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+      # Answer keys must never reach client JavaScript, and /learn routes
+      # stay within their bundle budget (design §7).
+      - name: Learn bundle checks (answer-key leak + budget)
+        run: npm run check:learn-bundle
+
+  images:
+    name: images (api/worker smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Provide the env_file compose expects
+        run: printf 'ENV=development\n' > .env
+      - name: Build the api/worker image from the root context
+        run: docker build -t fieldmap-api -f apps/api/Dockerfile .
+      - name: Baked-catalogue smoke (no mounts — proves the exact image input)
+        run: |
+          EXPECTED_VERSION=$(jq -r .curriculum.version curriculum/build/catalog.json)
+          EXPECTED_HASH=$(jq -r .source_tree_hash curriculum/build/catalog.json)
+          docker run --rm fieldmap-api python -m app.scripts.smoke_curriculum --expected-version "$EXPECTED_VERSION" --expected-hash "$EXPECTED_HASH"
+          if docker run --rm fieldmap-api python -m app.scripts.smoke_curriculum --expected-version -1 --expected-hash "$EXPECTED_HASH"; then
+            echo "version mismatch smoke unexpectedly passed"
+            exit 1
+          fi
+          if docker run --rm fieldmap-api python -m app.scripts.smoke_curriculum --expected-version "$EXPECTED_VERSION" --expected-hash "not-$EXPECTED_HASH"; then
+            echo "hash mismatch smoke unexpectedly passed"
+            exit 1
+          fi
+      - name: Build via compose (same context wiring the deploys use)
+        run: docker compose build api worker
+      - name: Boot api with db/redis and probe /health + /ready curriculum fields
+        run: |
+          docker compose up -d db redis api
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8000/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS http://localhost:8000/health
+          READY=$(curl -sS http://localhost:8000/ready)
+          echo "$READY"
+          echo "$READY" | grep -q '"curriculum":"ok"' || (echo "curriculum not ok in /ready" && exit 1)
+      - name: Worker image catalogue smoke
+        run: docker compose run --rm --no-deps worker python -m app.scripts.smoke_curriculum
+      - name: Teardown
+        if: always()
+        run: docker compose down -v

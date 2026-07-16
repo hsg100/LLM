@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "prerequisites": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Prerequisites",
+      "type": "array"
+    },
+    "short_definition": {
+      "title": "Short Definition",
+      "type": "string"
+    },
+    "slug": {
+      "title": "Slug",
+      "type": "string"
+    }
+  },
+  "required": [
+    "slug",
+    "name",
+    "short_definition"
+  ],
+  "title": "Concept",
+  "type": "object"
+}

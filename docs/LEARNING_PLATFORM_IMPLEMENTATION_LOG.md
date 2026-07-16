@@ -177,6 +177,176 @@ impact. Old bookmarks continue to work in both directions.
 
 ---
 
+## Phase 2 — Curriculum & progress foundation
+
+**Branch:** `feat/phase-2-curriculum-foundation` (fresh from `main` at
+`d5438fd`, carrying the approved design + audit docs). Implemented per
+[`PHASE_2_TECHNICAL_DESIGN.md`](./PHASE_2_TECHNICAL_DESIGN.md) including the
+three final-approval conditions (exact-hash writes, semantic-version CI
+discipline, bounded deadlock retry).
+
+### What was built
+
+- `tools/curriculum_tools` — the compiler package (validate / build --check /
+  emit-schemas --check / semver-check), 26 unit tests incl. red paths for all
+  nine validator rule classes and the semver classes.
+- `curriculum/` — llm-pathway v1: 8 topics (4 active), 13 canonical concepts,
+  4 lessons ("How an LLM generates text" unit) with checkpoints, demo IDs +
+  required fallbacks and cited sources; committed drift-gated artifacts
+  `catalog.json` (public) and `catalog.grading.json` (api-only answer keys).
+- Migration `0007_learning_progress` — three additive tables with the
+  approved constraints; verified upgrade → downgrade → upgrade clean and
+  autogenerate drift-free.
+- `/api/learn/*` — catalogue-info, progress read, idempotent progress PUT
+  (true no-op on identical input; completion never client-writable),
+  checkpoint POST (server-graded, idempotent by client_attempt_id, monotonic
+  updates, fixed lock order, 40P01/40001 bounded jittered retry); exact
+  catalog_hash required on writes (409 catalogue_version_mismatch);
+  `/ready` gates on the catalogue and reports version + hash.
+- `/learn`, `/learn/[topic]`, `/learn/[topic]/[lesson]` — statically
+  generated from the catalogue via a `server-only` accessor; markdown
+  rendered with HTML disabled; demo placeholders carry their fallbacks;
+  client runtime syncs resume position + checkpoints with local retention
+  and honest paused-sync states on 409/outage.
+- Packaging: root `.dockerignore`, api image built from the repo root with
+  the catalogue baked at `/curriculum/build` (outside `/app`, immune to the
+  dev bind mount), dev read-only curriculum mount, `make smoke-images`,
+  CI images job (baked-catalogue smoke without mounts + compose boot with
+  `/ready` curriculum probe).
+
+### Validation (run locally on this branch)
+
+| Check | Result |
+|---|---|
+| Compiler tests | ✅ 26 passed |
+| `curriculum-tools validate` / `build --check` / `emit-schemas --check` | ✅ clean, no drift |
+| `semver-check` vs origin/main | ✅ initial introduction → exempt (by design) |
+| Backend ruff | ✅ clean |
+| Backend tests | ✅ 186 passed (16 new: contracts, idempotency, isolation, 10/16-way concurrency, retry paths, integrity, /ready) |
+| Migration 0007 | ✅ upgrade → downgrade → upgrade clean; `alembic check` drift-free |
+| Frontend tests | ✅ 42 passed |
+| `next build` | ✅ green; all 4 lessons + 4 topics statically generated (~106 kB first load) |
+| `check:learn-bundle` | ✅ no canary/`correct_index` in /learn chunks; ≤450 kB budget (current ~345 kB) |
+| Docker image smoke | ⚠ not runnable in the authoring sandbox (no Docker daemon) — executed by the CI `images` job on the PR |
+
+### Codex takeover audit — 14 July 2026
+
+The takeover started from `830812389e2c9810ff2e868a917d363bbbdd5d87` on
+`feat/phase-2-curriculum-foundation`; PR #8 was draft, had no submitted
+reviews or review threads, and its prior backend/frontend/images checks were
+green. The independent pass confirmed the client outbox defects called out in
+the handoff:
+
+- failed reading-position writes displayed a local-save message without
+  retaining the failed `PUT`;
+- pending checkpoint attempts were not scoped to the authenticated user;
+- checkpoint attempts were retained only after the network request failed,
+  not before submission;
+- retained attempts kept their original catalogue hash permanently; and
+- localStorage failures could be swallowed while the UI implied recovery was
+  available.
+
+Fixes added a versioned, user-scoped local learning outbox
+(`fm-learn-outbox-v2`) for both reading positions and checkpoints. Entries are
+write-ahead retained before network submission, coalesced by
+user/lesson/version for progress, bounded by age and count, retried on mount
+and browser `online`, and protected from duplicate concurrent submissions.
+Retries verify the current signed-in user before submission. Same-version
+retained entries may be rebased to the current page catalogue hash when their
+referenced lesson blocks or checkpoint IDs/options still match;
+changed-version checkpoint answers and invalid references are preserved but not
+auto-submitted.
+
+A follow-up pass found one remaining progress-write race in that first outbox
+fix: overlapping debounced `PUT`s for the same progress key could share an
+outbox ID, allowing an older successful request to clear a newer retained
+position, and allowing server commits to arrive out of lesson order. The
+repair adds explicit outbox revisions plus a serialized latest-value-wins
+progress flusher per user/lesson/version. At most one progress `PUT` is active
+for a key; newer scroll positions replace the retained entry while the active
+request finishes; clearing is conditional on the exact revision that was sent;
+and the flusher immediately submits the latest retained revision after the
+active request completes. Loaded `last_block_id` also seeds the client
+furthest-seen index so observer activity cannot submit a backwards resume
+position after restoration.
+
+Additional audit fixes:
+
+- restored visible keyboard focus on Learn cards and checkpoint controls after
+  inline reset styles had removed focus outlines;
+- made the API image's catalogue location explicit with
+  `CURRICULUM_CATALOG_DIR=/curriculum/build`; and
+- tightened the Vitest `server-only` alias so the full frontend suite resolves
+  the server-only sentinel deterministically.
+
+Takeover validation:
+
+| Check | Result |
+|---|---|
+| `npm install` | ✅ completed with the project lockfile; local Node 23 emitted engine-range warnings and npm reported two existing vulnerabilities |
+| Focused outbox tests | ✅ 17 deterministic tests passed (progress retention/retry/revision-checked serialization, no backwards resume write, checkpoint write-ahead/retry, user isolation, catalogue reconciliation, storage failure, duplicate retry guard) |
+| Full frontend tests | ✅ 54 passed |
+| `next build` | ✅ green; Google Font optimization warned because the stylesheet could not be downloaded in this environment |
+| `check:learn-bundle` | ✅ no Learn bundle leakage; route bundles stayed below the 450 kB budget (`/learn/page` 350 kB, lesson page 356 kB, topic page 314 kB raw client JS) |
+| `curriculum-tools validate` / `build --check` / `emit-schemas --check` / `semver-check --base-ref origin/main` | ✅ clean; semantic check correctly treated Phase 2 as the initial curriculum introduction |
+| Compiler tests | ✅ 26 passed |
+| Backend ruff | ✅ clean |
+| Backend tests | ✅ 152 passed, 34 skipped (local environment lacked Postgres-backed integration services) |
+| Browser QA against local production build | ✅ `/learn`, all active topic pages, all four lesson pages, and legacy `/`, `/landscapes`, `/review`, `/search` checked at 1365, 430, 390 and 360 px with no horizontal overflow or page errors; offline checkpoint retention, keyboard focus, and reduced-motion context verified |
+| Docker/image smoke and compose boot | ⚠ not runnable locally: Docker CLI was present but the daemon socket was unavailable; rely on PR `images` CI for this gate |
+| Migration upgrade/downgrade/drift | ⚠ not rerun locally in takeover because Postgres/Alembic integration services were unavailable; prior PR CI and original Phase 2 evidence cover this until new CI finishes |
+| Fresh PR CI after progress serialization fix | ✅ GitHub Actions run `29343163126` on `3b3e9c7` succeeded for `backend (api)`, `frontend (web)` and `images (api/worker smoke)`; Vercel commit status was success/Ready |
+
+The deferred product-experience audit remains deferred. Notable friction found
+inside Phase 2 only: local server-graded pass/fail browser QA could not be
+exercised without the API database stack, and the local package toolchain used
+Node 23 while the app declares Node 20/22/24 ranges.
+
+### Production runbook — migration 0007 (deployment gate)
+
+Production application of migration 0007 is **blocked** until every line
+below is filled in with real output (design §11). This is a deployment gate,
+not a coding gate.
+
+```text
+[ ] 1. Backup command + output ......... (make prod-backup-db)
+[ ] 2. Timestamped backup location ..... (path on the VPS / offsite copy)
+[ ] 3. Non-zero size ................... (ls -l output)
+[ ] 4. Validity check .................. (pg_restore --list <backup> | head)
+[ ] 5. Restore command (verbatim) ...... (documented before, not during, an emergency)
+[ ] 6. Pre-migration schema revision ... (alembic current → expect 0006_user_auth_columns)
+```
+
+Then: `alembic upgrade head` → deploy api (`make prod-up`) → web deploys
+automatically from `main` (order-independent; the 409/retry path covers the
+skew window in both directions).
+
+### Rollback
+
+- Preferred: revert the Phase 2 commits / redeploy previous images — the
+  three new tables are inert to old code; no downgrade, no data loss.
+- Full: `alembic downgrade -1` (drops learner progress only, never research
+  data); restore path = runbook item 5.
+
+---
+
+## Deferred: comprehensive product-experience audit
+
+After the current learning-platform roadmap is complete, conduct the
+comprehensive product-experience audit defined in
+[`DEFERRED_PRODUCT_EXPERIENCE_AUDIT_AND_OVERHAUL.md`](./DEFERRED_PRODUCT_EXPERIENCE_AUDIT_AND_OVERHAUL.md)
+before treating the resulting interface and workflows as final. The audit
+covers the entire product experience (proposition, onboarding, home,
+navigation, end-to-end workflows, feature cohesion, terminology,
+quality-of-life, visual consistency, background-work feedback, performance,
+mobile, accessibility, settings, telemetry, and whether any frontend or core
+restructuring is warranted); landscape-scoped navigation is recorded there as
+one example, not the scope. Significant usability friction observed during
+the remaining phases should be logged here without expanding the active
+phase, unless it is a genuine blocker.
+
+---
+
 ## Deviations from the specification
 
 1. **Branch name** — `claude/learning-platform-recovery-sscpje` instead of

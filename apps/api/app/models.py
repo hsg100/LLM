@@ -16,6 +16,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -397,4 +398,95 @@ class ObsidianExport(SQLModel, table=True):
     content_hash: str = Field(index=True)
     commit_sha: Optional[str] = None
     pushed: bool = False
+    created_at: datetime = Field(default_factory=_now)
+
+
+# ---------------------------------------------------------------------------
+# Learning progress (Phase 2 — docs/PHASE_2_TECHNICAL_DESIGN.md §8).
+# Curriculum content lives in Git (curriculum/build/catalog.json), never in
+# these tables; slugs/versions are validated against the loaded catalogue at
+# the API layer. checkpoint_attempts is append-only: no updated_at, no UPDATE
+# path in code.
+# ---------------------------------------------------------------------------
+class CurriculumProgress(SQLModel, table=True):
+    __tablename__ = "curriculum_progress"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "curriculum_slug", "curriculum_version", name="uq_curriculum_progress"
+        ),
+        CheckConstraint(
+            "status IN ('active','completed')", name="ck_curriculum_progress_status"
+        ),
+        CheckConstraint(
+            "(status = 'completed' AND completed_at IS NOT NULL)"
+            " OR (status <> 'completed' AND completed_at IS NULL)",
+            name="ck_curriculum_progress_completion",
+        ),
+    )
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
+    curriculum_slug: str
+    curriculum_version: int
+    status: str = Field(default="active")  # active | completed
+    current_topic_slug: Optional[str] = None
+    started_at: datetime = Field(default_factory=_now)
+    completed_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class LessonProgress(SQLModel, table=True):
+    __tablename__ = "lesson_progress"
+    __table_args__ = (
+        UniqueConstraint("user_id", "lesson_slug", "lesson_version", name="uq_lesson_progress"),
+        CheckConstraint(
+            "status IN ('in_progress','completed')", name="ck_lesson_progress_status"
+        ),
+        CheckConstraint(
+            "(status = 'completed' AND completed_at IS NOT NULL)"
+            " OR (status <> 'completed' AND completed_at IS NULL)",
+            name="ck_lesson_progress_completion",
+        ),
+        CheckConstraint(
+            "best_checkpoint_score IS NULL"
+            " OR (best_checkpoint_score >= 0 AND best_checkpoint_score <= 1)",
+            name="ck_lesson_progress_score",
+        ),
+        Index("ix_lesson_progress_user_status", "user_id", "status", "updated_at"),
+    )
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
+    lesson_slug: str
+    lesson_version: int
+    status: str = Field(default="in_progress")  # in_progress | completed
+    last_block_id: Optional[str] = None  # resumable position
+    best_checkpoint_score: Optional[float] = Field(default=None, sa_column=Column(Float))
+    started_at: datetime = Field(default_factory=_now)
+    completed_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class CheckpointAttempt(SQLModel, table=True):
+    __tablename__ = "checkpoint_attempts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "client_attempt_id", name="uq_checkpoint_attempt_client"),
+        Index(
+            "ix_checkpoint_attempts_user_lesson",
+            "user_id",
+            "lesson_slug",
+            "lesson_version",
+            "created_at",
+        ),
+    )
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
+    lesson_slug: str
+    lesson_version: int
+    checkpoint_slug: str
+    score: float = Field(sa_column=Column(Float, nullable=False))
+    passed: bool
+    responses: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    client_attempt_id: str
     created_at: datetime = Field(default_factory=_now)

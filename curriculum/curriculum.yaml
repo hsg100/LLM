@@ -1,0 +1,12 @@
+slug: llm-pathway
+title: Understanding LLMs from first principles
+version: 1
+topics:
+  - what-language-models-do
+  - tokens-and-tokenisation
+  - embeddings-and-representation
+  - neural-network-foundations
+  - transformer-architecture
+  - attention
+  - training-and-next-token-prediction
+  - inference-and-sampling

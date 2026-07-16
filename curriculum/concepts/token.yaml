@@ -1,0 +1,4 @@
+slug: token
+name: Token
+short_definition: The unit of text a language model actually reads and writes — often a word piece, not a whole word.
+prerequisites: []

@@ -1,0 +1,51 @@
+{
+  "artifact_hash": "101ebfefa53b0873db42497875673392f97c8d43961074a18f8b1064da8913e2",
+  "canary": "__FIELDMAP_GRADING_CANARY__",
+  "checkpoints": {
+    "attention-routing": {
+      "answer_key": {
+        "q-limits": 1,
+        "q-mask": 2,
+        "q-qkv": 0,
+        "q-role": 1
+      },
+      "checkpoint_slug": "attention-checkpoint",
+      "lesson_version": 1,
+      "pass_score": 0.8
+    },
+    "embedding-space": {
+      "answer_key": {
+        "q-projection": 0,
+        "q-similar": 1,
+        "q-what": 3
+      },
+      "checkpoint_slug": "embeddings-checkpoint",
+      "lesson_version": 1,
+      "pass_score": 0.8
+    },
+    "sampling-controls": {
+      "answer_key": {
+        "q-same-dist": 3,
+        "q-temp": 2,
+        "q-topp": 1,
+        "q-two-steps": 1
+      },
+      "checkpoint_slug": "sampling-checkpoint",
+      "lesson_version": 1,
+      "pass_score": 0.8
+    },
+    "tokens-and-tokenisers": {
+      "answer_key": {
+        "q-cost": 3,
+        "q-fixed": 1,
+        "q-rare": 2,
+        "q-unit": 1
+      },
+      "checkpoint_slug": "tokens-checkpoint",
+      "lesson_version": 1,
+      "pass_score": 0.8
+    }
+  },
+  "format": 1,
+  "source_tree_hash": "e4fadcab09e8f15c3f878d8c331bcf0167a92af26763220d1c9cf15c3f719130"
+}

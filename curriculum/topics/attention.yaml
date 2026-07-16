@@ -1,0 +1,16 @@
+slug: attention
+title: Attention
+summary: Content-dependent routing of information between tokens.
+status: active
+prerequisites:
+  - embeddings-and-representation
+learning_objectives:
+  - Explain queries, keys and values at an intuitive level
+  - Interpret a simple attention-weight matrix
+  - Predict how causal masking changes information flow
+lessons:
+  - attention-routing
+concepts:
+  - attention
+  - query-key-value
+  - causal-mask

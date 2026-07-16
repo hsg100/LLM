@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "slug": {
+      "title": "Slug",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "topics": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Topics",
+      "type": "array"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "slug",
+    "title",
+    "version",
+    "topics"
+  ],
+  "title": "CurriculumManifest",
+  "type": "object"
+}

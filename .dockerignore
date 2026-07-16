@@ -1,0 +1,32 @@
+# Root build context for the api/worker image (design §5.1). Keeps VCS data,
+# secrets, dependency trees and local artifacts out of the Docker context.
+# NOTE: curriculum/build/ must NOT be ignored — it ships in the api image.
+.git/
+.gitignore
+.env
+.env.*
+!.env.example
+**/node_modules/
+**/.next/
+out/
+dist/
+build/
+**/.venv/
+**/venv/
+**/__pycache__/
+*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+*.sqlite
+*.sqlite3
+*.db
+dump.rdb
+*.log
+backups/
+.idea/
+.vscode/
+.DS_Store
+# The web image builds from its own ./apps/web context (with node_modules
+# etc. excluded above); the api/worker image never needs the web app.
+apps/web/

@@ -1,0 +1,5 @@
+slug: vector-similarity
+name: Vector similarity
+short_definition: A numeric measure (commonly cosine similarity) of how close two embedding vectors point.
+prerequisites:
+  - embedding

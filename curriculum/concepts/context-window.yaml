@@ -1,0 +1,5 @@
+slug: context-window
+name: Context window
+short_definition: The maximum number of tokens a model can attend over in one pass.
+prerequisites:
+  - token

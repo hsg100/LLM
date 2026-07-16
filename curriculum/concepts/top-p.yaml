@@ -1,0 +1,5 @@
+slug: top-p
+name: Top-p (nucleus) sampling
+short_definition: A sampling control that keeps only the smallest set of tokens whose probabilities sum to p, then samples within it.
+prerequisites:
+  - probability-distribution
